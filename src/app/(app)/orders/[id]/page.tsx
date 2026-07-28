@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { suggestPropertyMatch } from "@/lib/property-suggestion";
 import { updateOrder } from "../actions";
 
 export default async function OrderDetailPage({
@@ -21,7 +22,7 @@ export default async function OrderDetailPage({
         .eq("id", id)
         .single(),
       supabase.from("retailers").select("id, name").order("name"),
-      supabase.from("properties").select("id, name").order("name"),
+      supabase.from("properties").select("id, name, address").order("name"),
     ]);
 
   if (!order) notFound();
@@ -40,6 +41,12 @@ export default async function OrderDetailPage({
 
   const updateOrderWithId = updateOrder.bind(null, id);
 
+  const needsReview = !order.property_id;
+  const suggestion = needsReview
+    ? suggestPropertyMatch(order.po_number, properties ?? [])
+    : null;
+  const propertyDefaultValue = order.property_id ?? suggestion?.id ?? "";
+
   return (
     <div className="mx-auto flex max-w-xl flex-col gap-6 px-4 py-8">
       <div className="flex items-center justify-between">
@@ -55,6 +62,14 @@ export default async function OrderDetailPage({
           )}
         </div>
       </div>
+
+      {needsReview && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+          This order needs review — it was created automatically and has no
+          property assigned yet. Everything else below is whatever&apos;s
+          known so far.
+        </div>
+      )}
 
       <form
         action={updateOrderWithId}
@@ -80,16 +95,25 @@ export default async function OrderDetailPage({
           Property
           <select
             name="property_id"
-            defaultValue={order.property_id}
+            defaultValue={propertyDefaultValue}
             required
             className="h-11 rounded-md border border-black/15 px-3 text-base font-normal dark:border-white/20"
           >
+            <option value="" disabled>
+              Select a property…
+            </option>
             {properties?.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
             ))}
           </select>
+          {suggestion && (
+            <span className="text-xs text-zinc-600 dark:text-zinc-400">
+              Suggested from &quot;{order.po_number}&quot; — double-check
+              before saving.
+            </span>
+          )}
         </label>
 
         <label className="flex flex-col gap-1 text-sm font-medium">
@@ -135,20 +159,26 @@ export default async function OrderDetailPage({
 
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">Items</h2>
-        <ul className="flex flex-col gap-2">
-          {items?.map((item) => (
-            <li
-              key={item.id}
-              className="flex items-center justify-between rounded-md border border-black/10 px-3 py-2 dark:border-white/10"
-            >
-              <span>{item.name}</span>
-              <span className="text-sm text-zinc-600 dark:text-zinc-400">
-                x{item.expected_quantity}
-                {item.unit_price != null ? ` · $${item.unit_price}` : ""}
-              </span>
-            </li>
-          ))}
-        </ul>
+        {items && items.length > 0 ? (
+          <ul className="flex flex-col gap-2">
+            {items.map((item) => (
+              <li
+                key={item.id}
+                className="flex items-center justify-between rounded-md border border-black/10 px-3 py-2 dark:border-white/10"
+              >
+                <span>{item.name}</span>
+                <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                  x{item.expected_quantity}
+                  {item.unit_price != null ? ` · $${item.unit_price}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            No items yet — waiting on the CSV import or a manual update.
+          </p>
+        )}
       </section>
 
       <section className="flex flex-col gap-3">

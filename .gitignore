@@ -47,3 +47,7 @@ node_modules/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Per-test-run scratch CSVs (tests/csv-import.spec.ts writes then deletes
+# these; ignored as a backstop in case a run fails before cleanup)
+tests/fixtures/.tmp-*.csv
