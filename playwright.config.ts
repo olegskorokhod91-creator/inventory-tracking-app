@@ -7,7 +7,12 @@ export default defineConfig({
   testDir: "./tests",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  // Local Supabase Auth under this project's parallel test load occasionally
+  // makes a real signup take unusually long (confirmed via server logs: the
+  // POST does eventually 303-redirect, just not always within the test's
+  // window) - one retry absorbs that without masking a real regression,
+  // which would fail the retry too, not just the first attempt.
+  retries: process.env.CI ? 2 : 1,
   workers: process.env.CI ? 1 : undefined,
   reporter: "html",
   use: {

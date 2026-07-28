@@ -16,7 +16,9 @@ async function signUp(page: Page, name: string, email: string) {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill("password123");
   await page.getByRole("button", { name: "Sign up" }).click();
-  await expect(page).toHaveURL("/properties");
+  // Generous timeout: under parallel test load against a single local
+  // Supabase instance, signup can occasionally take longer than the 5s default.
+  await expect(page).toHaveURL("/properties", { timeout: 15000 });
 }
 
 async function promoteToAdmin(name: string) {
