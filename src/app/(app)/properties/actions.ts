@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { requireAdmin } from "@/lib/auth";
+import { getCurrentProfile, requireAdmin } from "@/lib/auth";
 
 export async function createProperty(formData: FormData) {
   await requireAdmin();
@@ -60,4 +60,43 @@ export async function unassignCleaner(propertyId: string, userId: string) {
     .eq("user_id", userId);
 
   revalidatePath(`/properties/${propertyId}`);
+}
+
+type DraftRequestItem = { item_name?: string; quantity?: string; note?: string };
+export type SupplyRequestFormState = { success: boolean } | undefined;
+
+export async function createSupplyRequests(
+  propertyId: string,
+  _prevState: SupplyRequestFormState,
+  formData: FormData,
+): Promise<SupplyRequestFormState> {
+  const profile = await getCurrentProfile();
+  if (!profile) return { success: false };
+
+  let draftItems: DraftRequestItem[];
+  try {
+    draftItems = JSON.parse(String(formData.get("items") ?? "[]"));
+  } catch {
+    return { success: false };
+  }
+
+  const rows = draftItems
+    .map((item) => ({
+      property_id: propertyId,
+      created_by: profile.id,
+      item_name: (item.item_name ?? "").trim(),
+      quantity: item.quantity ? Number(item.quantity) : null,
+      note: (item.note ?? "").trim() || null,
+    }))
+    .filter((row) => row.item_name.length > 0);
+
+  if (rows.length === 0) return { success: false };
+
+  // RLS ("Cleaners can create requests for assigned properties") is the
+  // actual gate here - this insert simply fails for anyone not assigned.
+  const supabase = await createClient();
+  const { error } = await supabase.from("supply_requests").insert(rows);
+
+  revalidatePath(`/properties/${propertyId}`);
+  return { success: !error };
 }

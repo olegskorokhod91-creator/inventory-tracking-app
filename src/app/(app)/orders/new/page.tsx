@@ -7,15 +7,24 @@ export default async function NewOrderPage() {
 
   const supabase = await createClient();
 
-  const [{ data: retailers }, { data: properties }] = await Promise.all([
-    supabase.from("retailers").select("id, name").order("name"),
-    supabase.from("properties").select("id, name").order("name"),
-  ]);
+  const [{ data: retailers }, { data: properties }, { data: openRequests }] =
+    await Promise.all([
+      supabase.from("retailers").select("id, name").order("name"),
+      supabase.from("properties").select("id, name").order("name"),
+      supabase
+        .from("supply_requests")
+        .select("id, property_id, item_name, quantity, note")
+        .is("resolved_by_order_id", null),
+    ]);
 
   return (
     <div className="mx-auto flex max-w-xl flex-col gap-6 px-4 py-8">
       <h1 className="text-2xl font-semibold">New order</h1>
-      <OrderForm retailers={retailers ?? []} properties={properties ?? []} />
+      <OrderForm
+        retailers={retailers ?? []}
+        properties={properties ?? []}
+        openRequests={openRequests ?? []}
+      />
     </div>
   );
 }

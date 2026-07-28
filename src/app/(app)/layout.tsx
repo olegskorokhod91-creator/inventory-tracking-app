@@ -17,6 +17,7 @@ export default async function AppLayout({
           {profile?.role === "admin" && (
             <>
               <Link href="/orders">Orders</Link>
+              <Link href="/requests">Requests</Link>
               <Link href="/users">Users</Link>
             </>
           )}

@@ -4,18 +4,35 @@ import { useState } from "react";
 import { createOrder } from "../actions";
 
 type Item = { name: string; expected_quantity: string; unit_price: string };
+type OpenRequest = {
+  id: string;
+  property_id: string;
+  item_name: string;
+  quantity: number | null;
+  note: string | null;
+};
 
 const emptyItem: Item = { name: "", expected_quantity: "1", unit_price: "" };
 
 export function OrderForm({
   retailers,
   properties,
+  openRequests,
 }: {
   retailers: { id: string; name: string }[];
   properties: { id: string; name: string }[];
+  openRequests: OpenRequest[];
 }) {
   const [items, setItems] = useState<Item[]>([{ ...emptyItem }]);
+  const [propertyId, setPropertyId] = useState("");
+  const [resolvedRequestIds, setResolvedRequestIds] = useState<Set<string>>(
+    new Set(),
+  );
   const today = new Date().toISOString().slice(0, 10);
+
+  const requestsForProperty = openRequests.filter(
+    (r) => r.property_id === propertyId,
+  );
 
   function updateItem(index: number, patch: Partial<Item>) {
     setItems((prev) =>
@@ -31,12 +48,29 @@ export function OrderForm({
     setItems((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function toggleRequest(id: string) {
+    setResolvedRequestIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
   return (
     <form
       action={createOrder}
       className="flex flex-col gap-4 rounded-lg border border-black/10 p-4 dark:border-white/10"
     >
       <input type="hidden" name="items" value={JSON.stringify(items)} />
+      <input
+        type="hidden"
+        name="resolved_request_ids"
+        value={JSON.stringify([...resolvedRequestIds])}
+      />
 
       <label className="flex flex-col gap-1 text-sm font-medium">
         Retailer
@@ -62,7 +96,11 @@ export function OrderForm({
         <select
           name="property_id"
           required
-          defaultValue=""
+          value={propertyId}
+          onChange={(e) => {
+            setPropertyId(e.target.value);
+            setResolvedRequestIds(new Set());
+          }}
           className="h-11 rounded-md border border-black/15 px-3 text-base font-normal dark:border-white/20"
         >
           <option value="" disabled>
@@ -75,6 +113,34 @@ export function OrderForm({
           ))}
         </select>
       </label>
+
+      {propertyId && requestsForProperty.length > 0 && (
+        <fieldset className="flex flex-col gap-2 rounded-md border border-black/10 p-3 dark:border-white/10">
+          <legend className="text-sm font-medium">
+            Open requests for this property
+          </legend>
+          <p className="text-xs text-zinc-600 dark:text-zinc-400">
+            Check off anything this order resolves — nothing is matched
+            automatically.
+          </p>
+          {requestsForProperty.map((r) => (
+            <label
+              key={r.id}
+              className="flex items-center gap-2 text-sm"
+            >
+              <input
+                type="checkbox"
+                checked={resolvedRequestIds.has(r.id)}
+                onChange={() => toggleRequest(r.id)}
+                className="h-5 w-5"
+              />
+              {r.item_name}
+              {r.quantity ? ` x${r.quantity}` : ""}
+              {r.note ? ` — ${r.note}` : ""}
+            </label>
+          ))}
+        </fieldset>
+      )}
 
       <label className="flex flex-col gap-1 text-sm font-medium">
         Order number (optional)

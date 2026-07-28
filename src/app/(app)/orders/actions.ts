@@ -38,6 +38,15 @@ export async function createOrder(formData: FormData) {
 
   if (items.length === 0) return;
 
+  let resolvedRequestIds: string[];
+  try {
+    resolvedRequestIds = JSON.parse(
+      String(formData.get("resolved_request_ids") ?? "[]"),
+    );
+  } catch {
+    resolvedRequestIds = [];
+  }
+
   const supabase = await createClient();
   const { data: orderId, error } = await supabase.rpc("create_manual_order", {
     p_retailer_id: retailerId,
@@ -46,6 +55,7 @@ export async function createOrder(formData: FormData) {
     p_order_date: orderDate,
     p_total_amount: totalAmountRaw ? Number(totalAmountRaw) : null,
     p_items: items,
+    p_resolved_request_ids: resolvedRequestIds,
   });
 
   if (error || !orderId) {

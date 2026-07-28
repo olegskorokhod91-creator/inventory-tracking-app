@@ -41,11 +41,7 @@ export default async function PropertiesPage() {
                 key={property.id}
                 className="rounded-lg border border-black/10 p-4 dark:border-white/10"
               >
-                {isAdmin ? (
-                  <Link href={`/properties/${property.id}`}>{row}</Link>
-                ) : (
-                  row
-                )}
+                <Link href={`/properties/${property.id}`}>{row}</Link>
               </li>
             );
           })}
