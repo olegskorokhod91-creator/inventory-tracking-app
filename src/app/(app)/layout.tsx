@@ -14,7 +14,12 @@ export default async function AppLayout({
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-black/10 px-4 py-3 dark:border-white/10">
         <nav className="flex items-center gap-4 text-sm font-medium">
           <Link href="/properties">Properties</Link>
-          {profile?.role === "admin" && <Link href="/users">Users</Link>}
+          {profile?.role === "admin" && (
+            <>
+              <Link href="/orders">Orders</Link>
+              <Link href="/users">Users</Link>
+            </>
+          )}
         </nav>
         <div className="flex items-center gap-3 text-sm">
           <span className="text-zinc-600 dark:text-zinc-400">
