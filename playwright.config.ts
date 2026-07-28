@@ -23,14 +23,16 @@ export default defineConfig({
     {
       // This app is mobile-first — every smoke test also runs at a narrow
       // (~375px) viewport, per CLAUDE.md's mobile UI review requirement.
-      // Uses Chromium (not the iPhone SE preset's WebKit) since only the
-      // Chromium browser is installed.
+      // Plain Chromium with a custom viewport (not a real device preset,
+      // and deliberately without isMobile/hasTouch): Chromium's mobile
+      // emulation without a matching deviceScaleFactor produces a
+      // layout-viewport vs. visual-viewport mismatch that offsets click
+      // coordinates by tens of pixels — a Chromium emulation quirk, not
+      // something worth chasing for a "does this fit at 375px" check.
       name: "mobile-375",
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 375, height: 667 },
-        isMobile: true,
-        hasTouch: true,
       },
     },
   ],

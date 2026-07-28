@@ -6,7 +6,9 @@ test("unauthenticated visitor is redirected to /login", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Log in" })).toBeVisible();
 });
 
-test("sign up, land on role-gated home page, log out", async ({ page }) => {
+test("sign up, land on properties (role-gated home), log out", async ({
+  page,
+}) => {
   const email = `test-${Date.now()}-${test.info().project.name}@example.com`;
 
   await page.goto("/signup");
@@ -15,11 +17,11 @@ test("sign up, land on role-gated home page, log out", async ({ page }) => {
   await page.getByLabel("Password").fill("password123");
   await page.getByRole("button", { name: "Sign up" }).click();
 
-  await expect(page).toHaveURL("/");
+  await expect(page).toHaveURL("/properties");
   await expect(
-    page.getByRole("heading", { name: /Logged in as/ }),
+    page.getByRole("heading", { name: "Properties" }),
   ).toBeVisible();
-  await expect(page.getByText(/Role: (admin|cleaner)/)).toBeVisible();
+  await expect(page.getByText(/\((admin|cleaner)\)/)).toBeVisible();
 
   await page.getByRole("button", { name: "Log out" }).click();
   await expect(page).toHaveURL(/\/login$/);
