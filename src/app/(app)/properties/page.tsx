@@ -2,6 +2,18 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { createProperty } from "./actions";
+import { overdueCutoffIso, formatElapsed } from "@/lib/confirmation-reminders";
+
+type OverduePackageRow = {
+  id: string;
+  delivered_at: string;
+  order_id: string;
+  orders: {
+    order_number: string | null;
+    retailers: { name: string } | null;
+    properties: { id: string; name: string } | null;
+  } | null;
+};
 
 export default async function PropertiesPage() {
   const profile = await getCurrentProfile();
@@ -13,9 +25,100 @@ export default async function PropertiesPage() {
     .select("id, name, address, status")
     .order("name");
 
+  // M7: the daily digest, admin side - a package delivered (by retailer/
+  // carrier) more than 24h ago with no cleaner confirmation yet. Purely a
+  // prompt to go check in person; nothing here changes package status.
+  let overdueByProperty: {
+    propertyId: string;
+    propertyName: string;
+    cleanerNames: string[];
+    packages: OverduePackageRow[];
+  }[] = [];
+
+  if (isAdmin) {
+    const { data: overduePackages } = await supabase
+      .from("packages")
+      .select("id, delivered_at, order_id, orders(order_number, retailers(name), properties(id, name))")
+      .eq("status", "delivered")
+      .lt("delivered_at", overdueCutoffIso())
+      .order("delivered_at", { ascending: true })
+      .returns<OverduePackageRow[]>();
+
+    const grouped = new Map<
+      string,
+      { propertyName: string; packages: OverduePackageRow[] }
+    >();
+    for (const pkg of overduePackages ?? []) {
+      const property = pkg.orders?.properties;
+      if (!property) continue;
+      const entry = grouped.get(property.id) ?? { propertyName: property.name, packages: [] };
+      entry.packages.push(pkg);
+      grouped.set(property.id, entry);
+    }
+
+    if (grouped.size > 0) {
+      const { data: assignments } = await supabase
+        .from("cleaner_property_assignments")
+        .select("property_id, profiles(name)")
+        .in("property_id", [...grouped.keys()])
+        .returns<{ property_id: string; profiles: { name: string } | null }[]>();
+
+      const cleanerNamesByProperty = new Map<string, string[]>();
+      for (const a of assignments ?? []) {
+        if (!a.profiles) continue;
+        const list = cleanerNamesByProperty.get(a.property_id) ?? [];
+        list.push(a.profiles.name);
+        cleanerNamesByProperty.set(a.property_id, list);
+      }
+
+      overdueByProperty = [...grouped.entries()].map(([propertyId, entry]) => ({
+        propertyId,
+        propertyName: entry.propertyName,
+        cleanerNames: cleanerNamesByProperty.get(propertyId) ?? [],
+        packages: entry.packages,
+      }));
+    }
+  }
+
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-8">
       <h1 className="text-2xl font-semibold">Properties</h1>
+
+      {overdueByProperty.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-lg font-medium">Overdue confirmations</h2>
+          <ul className="flex flex-col gap-3">
+            {overdueByProperty.map((group) => (
+              <li
+                key={group.propertyId}
+                className="rounded-lg border border-red-300 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950"
+              >
+                <p className="font-medium">
+                  {group.propertyName}
+                  {group.cleanerNames.length > 0 && (
+                    <span className="font-normal text-zinc-600 dark:text-zinc-400">
+                      {" "}
+                      · Assigned: {group.cleanerNames.join(", ")}
+                    </span>
+                  )}
+                </p>
+                <ul className="mt-2 flex flex-col gap-1">
+                  {group.packages.map((pkg) => (
+                    <li key={pkg.id} className="text-sm">
+                      <Link href={`/orders/${pkg.order_id}`} className="underline">
+                        {pkg.orders?.retailers?.name}
+                        {pkg.orders?.order_number ? ` #${pkg.orders.order_number}` : ""}
+                      </Link>
+                      {" — delivered "}
+                      {formatElapsed(pkg.delivered_at)}
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {properties && properties.length > 0 ? (
         <ul className="flex flex-col gap-3">
