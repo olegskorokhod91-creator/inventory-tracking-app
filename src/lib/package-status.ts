@@ -11,6 +11,14 @@ export function deriveActiveSubLabel(packages: { status: string }[]): string {
     (p) => p.status !== "cancelled" && p.status !== "confirmed_received",
   );
 
+  // requires_attention wasn't reachable when this function was first
+  // written (M4) - a cleaner's confirmation (M5) is what actually produces
+  // it now. Takes priority over the shipping-lifecycle labels below: a
+  // package a cleaner has already flagged is more actionable than one
+  // that's merely delayed in transit. "Attention needed" rather than
+  // "Needs review" deliberately - the latter is already this page's
+  // property-assignment review section heading, a same-page text collision.
+  if (unresolved.some((p) => p.status === "requires_attention")) return "Attention needed";
   if (unresolved.some((p) => p.status === "delayed")) return "Delayed";
   if (unresolved.some((p) => p.status === "delivered")) return "Waiting on cleaner";
   if (unresolved.some((p) => p.status === "shipped" || p.status === "out_for_delivery")) {

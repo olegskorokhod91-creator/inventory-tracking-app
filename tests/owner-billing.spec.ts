@@ -14,7 +14,9 @@ async function signUp(page: Page, name: string, email: string) {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill("password123");
   await page.getByRole("button", { name: "Sign up" }).click();
-  await expect(page).toHaveURL("/properties", { timeout: 15000 });
+  // Role-based landing (M5): admins land on /properties, cleaners on
+  // /confirmations - this helper is used for both, so accept either.
+  await expect(page).toHaveURL(/\/(properties|confirmations)/, { timeout: 15000 });
 }
 
 async function promoteToAdmin(name: string) {
@@ -37,7 +39,11 @@ test("owner billing report excludes cancelled orders and refunded items, rolls u
 
   await signUp(page, adminName, `admin-${stamp}@example.com`);
   await promoteToAdmin(adminName);
-  await page.reload();
+  // A plain reload() would just re-fetch whatever URL signUp() landed on -
+  // if that happened to be /confirmations (cleaner role at signup time,
+  // before this promotion), reload() never gets to /properties at all.
+  // goto() re-runs the role-based landing redirect for real.
+  await page.goto("/properties");
 
   // Two properties, one owner spanning both - exercises the owner roll-up.
   for (const [name, address] of [

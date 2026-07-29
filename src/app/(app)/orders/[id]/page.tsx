@@ -5,6 +5,21 @@ import { suggestPropertyMatch } from "@/lib/property-suggestion";
 import { updateOrder, updatePackage } from "../actions";
 import { RefundToggle } from "./RefundToggle";
 
+type ConfirmationRow = {
+  id: string;
+  package_id: string;
+  outcome: string;
+  note: string | null;
+  photo_path: string | null;
+  created_at: string;
+  profiles: { name: string } | null;
+  package_confirmation_items: {
+    actual_quantity: number;
+    item_note: string | null;
+    order_items: { name: string } | null;
+  }[];
+};
+
 const PACKAGE_STATUS_OPTIONS = [
   "expected",
   "shipped",
@@ -50,6 +65,34 @@ export default async function OrderDetailPage({
       .eq("order_id", id)
       .order("created_at"),
   ]);
+
+  const packageIds = (packages ?? []).map((p) => p.id);
+  const { data: confirmations } = packageIds.length
+    ? await supabase
+        .from("package_confirmations")
+        .select(
+          "id, package_id, outcome, note, photo_path, created_at, profiles(name), package_confirmation_items(actual_quantity, item_note, order_items(name))",
+        )
+        .in("package_id", packageIds)
+        .order("created_at", { ascending: false })
+        .returns<ConfirmationRow[]>()
+    : { data: [] as ConfirmationRow[] };
+
+  const confirmationsWithPhotoUrls = await Promise.all(
+    (confirmations ?? []).map(async (c) => {
+      if (!c.photo_path) return { ...c, photoUrl: null };
+      const { data: signed } = await supabase.storage
+        .from("confirmation-photos")
+        .createSignedUrl(c.photo_path, 3600);
+      return { ...c, photoUrl: signed?.signedUrl ?? null };
+    }),
+  );
+  const confirmationsByPackage = new Map<string, typeof confirmationsWithPhotoUrls>();
+  for (const c of confirmationsWithPhotoUrls) {
+    const list = confirmationsByPackage.get(c.package_id) ?? [];
+    list.push(c);
+    confirmationsByPackage.set(c.package_id, list);
+  }
 
   const updateOrderWithId = updateOrder.bind(null, id);
 
@@ -263,6 +306,46 @@ export default async function OrderDetailPage({
                     Save package
                   </button>
                 </form>
+
+                {(confirmationsByPackage.get(pkg.id) ?? []).length > 0 && (
+                  <div className="mt-3 flex flex-col gap-2 border-t border-black/10 pt-3 dark:border-white/10">
+                    <h3 className="text-sm font-medium">Confirmation history</h3>
+                    {(confirmationsByPackage.get(pkg.id) ?? []).map((c) => (
+                      <div
+                        key={c.id}
+                        className="flex flex-col gap-1 rounded-md bg-zinc-100 p-2 text-sm dark:bg-zinc-900"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium capitalize">
+                            {c.outcome.replaceAll("_", " ")}
+                          </span>
+                          <span className="text-xs text-zinc-600 dark:text-zinc-400">
+                            {c.profiles?.name} · {new Date(c.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                        {c.note && <p>{c.note}</p>}
+                        {c.package_confirmation_items.length > 0 && (
+                          <ul className="flex flex-col gap-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                            {c.package_confirmation_items.map((item, i) => (
+                              <li key={i}>
+                                {item.order_items?.name}: received x{item.actual_quantity}
+                                {item.item_note ? ` — ${item.item_note}` : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {c.photoUrl && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={c.photoUrl}
+                            alt="Confirmation photo"
+                            className="mt-1 max-h-48 rounded-md object-contain"
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </li>
             );
           })}

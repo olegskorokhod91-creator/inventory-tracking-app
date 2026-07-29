@@ -17,7 +17,9 @@ async function signUp(page: Page, name: string, email: string) {
   await page.getByRole("button", { name: "Sign up" }).click();
   // Generous timeout: under parallel test load against a single local
   // Supabase instance, signup can occasionally take longer than the 5s default.
-  await expect(page).toHaveURL("/properties", { timeout: 15000 });
+  // Role-based landing (M5): admins land on /properties, cleaners on
+  // /confirmations - this helper is used for both, so accept either.
+  await expect(page).toHaveURL(/\/(properties|confirmations)/, { timeout: 15000 });
 }
 
 async function promoteToAdmin(name: string) {

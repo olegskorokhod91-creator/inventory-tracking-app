@@ -22,7 +22,9 @@ async function signUp(page: Page, name: string, email: string) {
   await page.getByRole("button", { name: "Sign up" }).click();
   // Generous timeout: under parallel test load against a single local
   // Supabase instance, signup can occasionally take longer than the 5s default.
-  await expect(page).toHaveURL("/properties", { timeout: 15000 });
+  // Role-based landing (M5): admins land on /properties, cleaners on
+  // /confirmations - this helper is used for both, so accept either.
+  await expect(page).toHaveURL(/\/(properties|confirmations)/, { timeout: 15000 });
 }
 
 async function promoteToAdmin(name: string) {
@@ -44,7 +46,11 @@ test("CSV import creates draft orders, review screen surfaces suggestion, re-upl
 
   await signUp(page, adminName, `admin-${stamp}@example.com`);
   await promoteToAdmin(adminName);
-  await page.reload();
+  // A plain reload() would just re-fetch whatever URL signUp() landed on -
+  // if that happened to be /confirmations (cleaner role at signup time,
+  // before this promotion), reload() never gets to /properties at all.
+  // goto() re-runs the role-based landing redirect for real.
+  await page.goto("/properties");
 
   for (const [name, address] of [
     [propertyAlpha, "1 Alpha St"],
