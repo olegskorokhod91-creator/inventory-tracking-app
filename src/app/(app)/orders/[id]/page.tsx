@@ -5,6 +5,20 @@ import { suggestPropertyMatch } from "@/lib/property-suggestion";
 import { updateOrder, updatePackage } from "../actions";
 import { RefundToggle } from "./RefundToggle";
 
+type PackageRow = {
+  id: string;
+  tracking_number: string | null;
+  carrier: string | null;
+  status: string;
+  expected_delivery_date: string | null;
+  delivered_at: string | null;
+  delivered_source: string | null;
+  confirmed_at: string | null;
+  confirmed_source: string | null;
+  confirmed_by: string | null;
+  profiles: { name: string } | null;
+};
+
 type ConfirmationRow = {
   id: string;
   package_id: string;
@@ -16,7 +30,7 @@ type ConfirmationRow = {
   package_confirmation_items: {
     actual_quantity: number;
     item_note: string | null;
-    order_items: { name: string } | null;
+    order_items: { name: string; expected_quantity: number } | null;
   }[];
 };
 
@@ -61,9 +75,12 @@ export default async function OrderDetailPage({
       .order("name"),
     supabase
       .from("packages")
-      .select("id, tracking_number, carrier, status, expected_delivery_date")
+      .select(
+        "id, tracking_number, carrier, status, expected_delivery_date, delivered_at, delivered_source, confirmed_at, confirmed_source, confirmed_by, profiles(name)",
+      )
       .eq("order_id", id)
-      .order("created_at"),
+      .order("created_at")
+      .returns<PackageRow[]>(),
   ]);
 
   const packageIds = (packages ?? []).map((p) => p.id);
@@ -71,7 +88,7 @@ export default async function OrderDetailPage({
     ? await supabase
         .from("package_confirmations")
         .select(
-          "id, package_id, outcome, note, photo_path, created_at, profiles(name), package_confirmation_items(actual_quantity, item_note, order_items(name))",
+          "id, package_id, outcome, note, photo_path, created_at, profiles(name), package_confirmation_items(actual_quantity, item_note, order_items(name, expected_quantity))",
         )
         .in("package_id", packageIds)
         .order("created_at", { ascending: false })
@@ -251,6 +268,28 @@ export default async function OrderDetailPage({
                 key={pkg.id}
                 className="rounded-md border border-black/10 p-3 dark:border-white/10"
               >
+                {(pkg.delivered_at || pkg.confirmed_at) && (
+                  <div className="mb-3 flex flex-col gap-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                    {pkg.delivered_at && (
+                      <p>
+                        Retailer/carrier reported delivered{" "}
+                        {new Date(pkg.delivered_at).toLocaleString()}
+                        {pkg.delivered_source ? ` (source: ${pkg.delivered_source.replaceAll("_", " ")})` : ""}
+                      </p>
+                    )}
+                    {pkg.confirmed_at && (
+                      <p>
+                        Confirmed {new Date(pkg.confirmed_at).toLocaleString()}
+                        {pkg.confirmed_by
+                          ? ` by ${pkg.profiles?.name ?? "cleaner"}`
+                          : pkg.confirmed_source === "admin_manual"
+                            ? " by admin (manual override)"
+                            : ""}
+                        {pkg.confirmed_source ? ` — source: ${pkg.confirmed_source.replaceAll("_", " ")}` : ""}
+                      </p>
+                    )}
+                  </div>
+                )}
                 <form action={updatePackageWithId} className="flex flex-col gap-3">
                   <label className="flex flex-col gap-1 text-sm font-medium">
                     Status
@@ -326,12 +365,22 @@ export default async function OrderDetailPage({
                         {c.note && <p>{c.note}</p>}
                         {c.package_confirmation_items.length > 0 && (
                           <ul className="flex flex-col gap-0.5 text-xs text-zinc-600 dark:text-zinc-400">
-                            {c.package_confirmation_items.map((item, i) => (
-                              <li key={i}>
-                                {item.order_items?.name}: received x{item.actual_quantity}
-                                {item.item_note ? ` — ${item.item_note}` : ""}
-                              </li>
-                            ))}
+                            {c.package_confirmation_items.map((item, i) => {
+                              const expected = item.order_items?.expected_quantity;
+                              const diff = expected != null && expected !== item.actual_quantity;
+                              return (
+                                <li key={i}>
+                                  {item.order_items?.name}: received x{item.actual_quantity}
+                                  {expected != null ? ` (expected x${expected})` : ""}
+                                  {diff && (
+                                    <span className="ml-1 font-medium text-amber-700 dark:text-amber-400">
+                                      {item.actual_quantity < (expected ?? 0) ? "short" : "over"}
+                                    </span>
+                                  )}
+                                  {item.item_note ? ` — ${item.item_note}` : ""}
+                                </li>
+                              );
+                            })}
                           </ul>
                         )}
                         {c.photoUrl && (
