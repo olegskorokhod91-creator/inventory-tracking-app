@@ -1,6 +1,6 @@
 # Order Tracking App — Product & Technical Plan (Phase 1)
 
-**Status:** Pre-development planning. No code written yet.
+**Status:** M0 through M5 built and committed locally (see Section 16 for what each milestone actually delivered, including two milestones — M2.5, M3.5 — added mid-build beyond this document's original list). Not yet pushed to `origin/main` or deployed. This document is kept as the original pre-development advisory record; where the actual build diverged from what's recommended below, that's called out inline rather than silently edited away, so the reasoning trail stays intact. `CLAUDE.md` is the living day-to-day reference — check it first for current state.
 **Purpose:** Advisory document to align on scope, architecture, and risk before build begins.
 
 ---
@@ -135,6 +135,8 @@ Where I'd simplify: your spec lists ~10 order-level statuses and ~13 package-lev
 
 `Requires Attention` should be an explicit boolean/flag on the order rather than a status enum value, so it can layer on top of any other state and can't get silently overwritten by a later status change. This gets you all the visibility your spec wants with one status table to maintain instead of two that can disagree with each other. Fewer states = fewer bugs = easier for a manager to reason about six months from now.
 
+**Built (M2–M5):** exactly this shape, with one simplification beyond what's proposed above. Rather than three distinct package-level problem states (`not_found`/`damaged`/`incorrect_items`), the package_status enum collapsed all cleaner-reported problems into one value, `requires_attention` — the *specific* reason (package not found / items missing / incorrect quantity / wrong item / damaged / received-not-put-away) lives instead in a separate `package_confirmations.outcome` field, populated by M5's cleaner confirmation flow, not the package status itself. `orders.requires_attention` sat as a dead column (never set by anything) from M2 until M5 actually built the cleaner confirmation flow that produces it — a database trigger recomputes it from package state after every change, so application code never sets it directly and it can't drift out of sync the way three independent call-sites remembering to set the same flag by hand eventually would.
+
 ---
 
 ## 7. Recommended Mobile Application Format
@@ -242,6 +244,13 @@ Kept intentionally flat — no premature abstraction for future inventory featur
 
 **Future-proofing for inventory (minimum needed now, nothing more):** keep `order_items` referencing a normalized-ish `name` rather than a free-text blob per order, so a future `products` table can be introduced and backfilled without a painful migration. Don't build the `products` table yet — just don't make item names so unstructured that a future join is impossible.
 
+**Built (M0–M5) — real differences from the table list above, not just naming:**
+- `users` → Supabase `auth.users` + a `profiles` table (`id`, `name`, `role`, `active`) — `auth.users` already exists and holds credentials, no reason to duplicate that.
+- `cleaner_confirmations` / `confirmation_item_results` / `photos` → `package_confirmations` (one row per confirmation attempt, any outcome — insert-only audit log) + `package_confirmation_items` (per-item actual quantity, captured regardless of outcome). No separate `photos` table: a confirmation has at most one photo in practice, so `package_confirmations.photo_path` is a plain nullable column, not a one-to-many join.
+- **`delivery_events` and `activity_log` were never built.** Shipping-update emails update `packages` directly (no separate event log of every scan/status change), and there's no unified cross-entity audit table — `imported_emails`/`csv_imports`/`unmatched_updates` audit the pipeline side, `package_confirmations` audits the cleaner side, and `packages.delivered_source`/`confirmed_source`/`confirmed_by` record provenance for those two specific columns, but nothing ties it together the way Section 13 assumes `activity_log` does. Flagged as a real gap in `CLAUDE.md`, not silently dropped — worth a decision (build the unified log, or accept the scattered-per-table approach) before calling Phase 1 done.
+- `orders.owner_id`/owner billing (M3.5) and `orders.retailer_order_status` (M3.5, raw CSV passthrough) aren't in the list above at all — added mid-build for the owner billing report milestone, which itself wasn't part of the original milestone plan in Section 16.
+- `packages.confirmed_at`/`confirmed_source`/`confirmed_by` (M4/M5) parallel the existing `delivered_at`/`delivered_source` columns for the confirmed-received transition specifically, distinguishing an admin's manual override (`confirmed_source = 'admin_manual'`) from a real cleaner confirmation (`'cleaner_app'`).
+
 ---
 
 ## 12. Proposed Application Screens
@@ -265,6 +274,8 @@ Kept intentionally flat — no premature abstraction for future inventory featur
 
 Cleaners never see a screen with pricing or company-wide spend, consistent with your role requirements.
 
+**Built (M0–M5):** matches this closely, with two differences worth noting. First, "deliveries needing confirmation is effectively their home screen" was taken literally in the end — `/confirmations` is the actual post-login landing page for cleaners (not `/properties`), decided during M5 rather than left as just a prominent list within the properties view; `/properties` remains one tap away via nav for browsing by property directly. Second, there's no separate Active Orders "dashboard" route for admins — `/orders` itself was enhanced in place (needs-review section on top, an active-order sub-label added per M4) rather than building the standalone dashboard screen this section implies; a distinct search/filter-oriented view is planned for M6 (Past Orders) instead. The admin Order Detail screen also grew a "Confirmation history" section (M5) showing each cleaner confirmation's outcome, note, photo, and per-item actual-vs-expected — not explicitly listed above, but the natural place for a flagged order to actually be reviewable rather than just showing a red badge.
+
 ---
 
 ## 13. Security Requirements
@@ -273,7 +284,7 @@ Cleaners never see a screen with pricing or company-wide spend, consistent with 
 - **Least-privilege email access:** inbound-only email processing (the forwarding model in Section 3) means you never hold a password or OAuth grant to a real inbox at all — this is a meaningful security simplification versus connected inbox, worth restating here.
 - **Secure file storage:** screenshots/receipts/photos in Supabase Storage with access rules mirroring the RLS on the related order/property — a cleaner shouldn't be able to browse another property's photos by guessing a URL.
 - **API key handling:** AI extraction, email-provider, and tracking-API keys live server-side only, never shipped to the client bundle.
-- **Audit logging:** the `activity_log` table above covers this — every status change records actor, source, and confidence.
+- **Audit logging:** the `activity_log` table above covers this — every status change records actor, source, and confidence. **Not actually built (see Section 11/16) — this is currently only true per-feature**, not as a unified log: `imported_emails`/`csv_imports`/`unmatched_updates` cover the pipeline side, `package_confirmations` covers the cleaner-confirmation side, and `packages.delivered_source`/`confirmed_source`/`confirmed_by` cover provenance for those two columns specifically. Revisit before treating this requirement as satisfied.
 - **Data retention:** define how long raw forwarded emails and screenshots are kept once an order is fully resolved (I'd suggest a default like 12–24 months, configurable) — this is a decision for you, not something I'd hard-code.
 - **Dev vs. production separation:** separate Supabase projects for dev/staging vs. production, with Claude Code and any MCP tooling pointed only at dev by default, exactly as you specified. Production access should be a deliberate, separate step, not the default working environment.
 - **Backups:** Supabase's built-in point-in-time recovery (on paid tiers) is sufficient for this scale — no custom backup tooling needed in Phase 1.
@@ -324,14 +335,27 @@ Consolidating the pushback from above so it's easy to reference:
 ## 16. Milestone-Based Build Plan
 
 - **M0 — Foundation:** repo setup, Next.js + Supabase + Tailwind scaffold, auth, RLS skeleton for the two roles, deployed to Vercel (empty-but-working). Playwright installed with one smoke test.
+  ✅ **Done.** Local dev only — not yet deployed to Vercel.
 - **M1 — Core entities:** Properties, users, cleaner-property assignments. Admin can create properties and assign cleaners. Basic screens, no orders yet.
+  ✅ **Done.**
 - **M2 — Manual order entry + review screen:** the "fallback" path is actually the fastest thing to build first, and it exercises the whole orders/items/packages schema without needing the email pipeline yet.
+  ✅ **Done.** `orders`/`order_items`/`packages`/`package_items` schema, `create_manual_order` RPC, review screen.
+- **M2.5 — Supply requests** *(added mid-build, not part of the original list above):* cleaner-initiated supply requests (item name, quantity, note), manually resolved by an admin via order creation — never auto-matched to a specific order.
+  ✅ **Done.**
 - **M3 — Email import pipeline:** inbound email provider wired up, webhook → storage → queue → AI extraction → review screen (reusing M2's review UI). Dedupe/fingerprint logic. Test against real sample order confirmations from your actual retailers.
+  ✅ **Done.** Also picked up a second ingestion path not originally scoped to this milestone specifically: CSV import of the Amazon Business "Orders" report, sharing the same review screen and upsert logic (`upsert_order_from_pipeline`) as the email pipeline. `/unmatched-updates` review queue built alongside it, since both pipelines route low-confidence shipping-update matches there. The email classifier's heuristic is still unvalidated against a real Amazon confirmation/shipping email — see `CLAUDE.md` known gaps.
+- **M3.5 — Owner billing report** *(added mid-build, not part of the original list above):* `owners` table, `properties.owner_id` (one owner, many properties), `/reports/owner-billing` with property/date/owner/retailer filters and owner-level rollup, CSV/Excel export. Excludes cancelled orders and refunded items from spend totals (checked against a real Amazon Business export: no refund signal exists in that data at all, so refunds are admin-marked, not auto-detected); flags — never silently includes — orders still requiring attention.
+  ✅ **Done.**
 - **M4 — Active Orders + package status + shipment-update matching:** the matching/confidence logic from Section 4, the unmatched-updates review queue, the Active Orders dashboard.
+  ✅ **Done**, with the matching/confidence logic and unmatched-updates queue actually landing in M3 above (they were needed together with the email pipeline, not deferred to M4). What M4 actually added: an admin manual package-status-update UI (Layer 3 from Section 4 — tracking/carrier/status/expected-delivery, for cases the pipeline can't catch); multi-package support (a shipping-update email whose tracking number doesn't match any existing package on the order, where every existing package already has a *different* tracking number, now creates a second package row instead of overwriting the first and losing its tracking data — ambiguous no-tracking-number updates against multiple packages route to the unmatched-updates queue rather than guessing); and, rather than a separate Active Orders dashboard route, `/orders` was enhanced in place with a derived sub-label per active order (Delayed / Waiting on cleaner / In transit / Awaiting shipment / Attention needed) computed from its packages' least-resolved status.
 - **M5 — Cleaner confirmation flow:** the mobile-first confirmation screens, quantity adjusters, photo upload, Requires Attention flagging.
+  ✅ **Done.** `/confirmations` (list of packages delivered-but-not-confirmed across the cleaner's assigned properties, grouped by property) and `/confirmations/[packageId]` (expected items, a one-tap "everything correct" fast path, or one of six problem outcomes — package not found / items missing / incorrect quantity / wrong item / damaged / received-not-put-away — each revealing quantity steppers, an optional note, and an optional photo). `/confirmations` is the actual post-login landing page for cleaners, not just a prominent list (a deliberate decision, taking "effectively their home screen" literally — see Section 12). `requires_attention`, dead since M2, is now live: a database trigger recomputes it from package state after every confirmation, so application code never sets it directly. A second trigger restricts a cleaner's package update to exactly `status`/`confirmed_at`/`confirmed_source`/`confirmed_by`, and only into `confirmed_received`/`requires_attention` — enforced at the database level (not just the app UI), so a direct API call can't bypass it. First real use of Supabase Storage in this app (`confirmation-photos` bucket, private, RLS-scoped by property assignment); photos are capped at 5MB with client-side canvas-based compression before that check, so an oversized phone photo gets resized rather than rejected outright.
 - **M6 — Past Orders + search/filter, activity history views.**
+  Not yet started.
 - **M7 — Carrier tracking API integration (supplemental signal) + the simple daily-digest reminder.**
+  Not yet started.
 - **M8 — Hardening pass:** RLS audit, PWA install/manifest polish, mobile performance pass on a real low-end phone, error monitoring wired in, data-retention job for old raw emails/screenshots.
+  Not yet started. Note the `activity_log` gap surfaced in Section 11 — worth resolving before calling this pass complete, since it's what Section 13's audit-logging requirement currently assumes exists.
 
 Each milestone should end in a working, demoable state and a git commit — nothing merges as "half a feature."
 
