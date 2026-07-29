@@ -67,6 +67,24 @@ export async function createOrder(formData: FormData) {
   redirect(`/orders/${orderId}`);
 }
 
+export async function setItemRefunded(itemId: string, refunded: boolean) {
+  await requireAdmin();
+
+  const supabase = await createClient();
+  const { data: item } = await supabase
+    .from("order_items")
+    .select("order_id")
+    .eq("id", itemId)
+    .single();
+
+  await supabase
+    .from("order_items")
+    .update({ is_refunded: refunded })
+    .eq("id", itemId);
+
+  if (item) revalidatePath(`/orders/${item.order_id}`);
+}
+
 export async function updateOrder(orderId: string, formData: FormData) {
   await requireAdmin();
 

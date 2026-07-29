@@ -19,6 +19,8 @@ export default async function AppLayout({
               <Link href="/orders">Orders</Link>
               <Link href="/requests">Requests</Link>
               <Link href="/unmatched-updates">Unmatched</Link>
+              <Link href="/owners">Owners</Link>
+              <Link href="/reports/owner-billing">Billing report</Link>
               <Link href="/users">Users</Link>
             </>
           )}

@@ -11,6 +11,7 @@ export type ParsedCsvOrder = {
   order_date: string;
   total_amount: number;
   po_number: string | null;
+  retailer_order_status: string | null;
   items: ParsedCsvItem[];
 };
 
@@ -37,6 +38,7 @@ export function parseAmazonBusinessOrdersCsv(csvText: string): ParsedCsvOrder[] 
         order_date: toIsoDate(row["Order Date"]),
         total_amount: Number(row["Order Net Total"]) || 0,
         po_number: row["PO Number"]?.trim() || null,
+        retailer_order_status: row["Order Status"]?.trim() || null,
         items: [],
       });
     }

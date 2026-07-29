@@ -20,13 +20,19 @@ export default async function PropertyDetailPage({
   // `notFound()` also doubles as the access-control boundary for them.
   const { data: property } = await supabase
     .from("properties")
-    .select("id, name, address, status, notes")
+    .select("id, name, address, status, notes, owner_id")
     .eq("id", id)
     .single();
 
   if (!property) notFound();
 
   const isAdmin = profile?.role === "admin";
+
+  let owners: { id: string; name: string }[] = [];
+  if (isAdmin) {
+    const { data } = await supabase.from("owners").select("id, name").order("name");
+    owners = data ?? [];
+  }
 
   const { data: requests } = await supabase
     .from("supply_requests")
@@ -114,6 +120,21 @@ export default async function PropertyDetailPage({
                 rows={3}
                 className="rounded-md border border-black/15 px-3 py-2 text-base font-normal dark:border-white/20"
               />
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-medium">
+              Owner
+              <select
+                name="owner_id"
+                defaultValue={property.owner_id ?? ""}
+                className="h-11 rounded-md border border-black/15 px-3 text-base font-normal dark:border-white/20"
+              >
+                <option value="">Managed directly (no owner)</option>
+                {owners.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
             </label>
             <button
               type="submit"

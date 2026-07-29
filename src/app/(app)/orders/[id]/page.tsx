@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { suggestPropertyMatch } from "@/lib/property-suggestion";
 import { updateOrder } from "../actions";
+import { RefundToggle } from "./RefundToggle";
 
 export default async function OrderDetailPage({
   params,
@@ -30,7 +31,7 @@ export default async function OrderDetailPage({
   const [{ data: items }, { data: packages }] = await Promise.all([
     supabase
       .from("order_items")
-      .select("id, name, expected_quantity, unit_price")
+      .select("id, name, expected_quantity, unit_price, is_refunded")
       .eq("order_id", id)
       .order("name"),
     supabase
@@ -164,13 +165,18 @@ export default async function OrderDetailPage({
             {items.map((item) => (
               <li
                 key={item.id}
-                className="flex items-center justify-between rounded-md border border-black/10 px-3 py-2 dark:border-white/10"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-black/10 px-3 py-2 dark:border-white/10"
               >
-                <span>{item.name}</span>
-                <span className="text-sm text-zinc-600 dark:text-zinc-400">
-                  x{item.expected_quantity}
-                  {item.unit_price != null ? ` · $${item.unit_price}` : ""}
+                <span className={item.is_refunded ? "line-through opacity-60" : ""}>
+                  {item.name}
                 </span>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                    x{item.expected_quantity}
+                    {item.unit_price != null ? ` · $${item.unit_price}` : ""}
+                  </span>
+                  <RefundToggle itemId={item.id} refunded={item.is_refunded} />
+                </div>
               </li>
             ))}
           </ul>

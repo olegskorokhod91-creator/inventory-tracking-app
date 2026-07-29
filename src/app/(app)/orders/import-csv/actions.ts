@@ -62,6 +62,7 @@ export async function importCsv(
       p_total_amount: order.total_amount,
       p_po_number: order.po_number,
       p_items: order.items,
+      p_retailer_order_status: order.retailer_order_status,
     });
 
     if (error) {

@@ -23,12 +23,13 @@ export async function updateProperty(propertyId: string, formData: FormData) {
   const address = String(formData.get("address") ?? "").trim();
   const status = String(formData.get("status") ?? "active");
   const notes = String(formData.get("notes") ?? "").trim();
+  const ownerId = String(formData.get("owner_id") ?? "").trim();
   if (!name || !address) return;
 
   const supabase = await createClient();
   await supabase
     .from("properties")
-    .update({ name, address, status, notes: notes || null })
+    .update({ name, address, status, notes: notes || null, owner_id: ownerId || null })
     .eq("id", propertyId);
 
   revalidatePath(`/properties/${propertyId}`);

@@ -2,7 +2,43 @@
 
 ## Project
 
-A mobile-first order tracking app for a short-term rental property management company. It tracks purchases (Amazon, Walmart, Home Depot, Costco, etc.) from order placement through cleaner-confirmed receipt at the correct property. Full context lives in `docs/order-tracking-app-plan.md` — read it before making architectural decisions.
+A mobile-first order tracking app for a short-term rental property management company. It tracks purchases (Amazon, Walmart, Home Depot, Costco, etc.) from order placement through cleaner-confirmed receipt at the correct property. Full context lives in `order-tracking-app-plan.md` (repo root) — read it before making architectural decisions.
+
+## Build status (as of 2026-07-29)
+
+M0 through M3.5 are complete and committed locally, currently **not yet pushed to `origin/main`** (deliberate, not an oversight — confirm with the user before pushing). M2.5 and M3.5 are milestones added mid-build, beyond the original list in `order-tracking-app-plan.md` Section 16.
+
+**Done:** M0 (scaffold/auth/RLS skeleton) · M1 (properties, users, cleaner assignments) · M2 (manual order entry, `orders`/`order_items`/`packages`/`package_items`, review screen) · M2.5 (supply requests — cleaner-initiated, manually resolved, never auto-matched) · M3 (email + CSV import pipeline, `/unmatched-updates` queue) · M3.5 (owner billing report — `owners` table, `properties.owner_id` one-to-many, `/reports/owner-billing`, CSV/Excel export).
+
+**Next:** not yet scoped. Start that conversation fresh (same pattern as how M2.5/M3.5 got introduced: user describes it, walk through schema/screens before writing code).
+
+### Established patterns — follow these for new work, don't rediscover them
+
+- **RLS policy + table `GRANT` are both required, always.** Supabase's local default no longer auto-exposes new tables to `authenticated`/`service_role` — a missing `GRANT` produces `permission denied` even with a correct RLS policy. Hit repeatedly (M0 profiles, M1 properties, M2 orders, M3 pipeline tables) — check both for every new table or column.
+- **`is_admin()`** (security-definer function, in the M0 profiles migration) is the standard way to gate admin-only rows. Don't write inline `exists (select ... from profiles where role='admin')` inside a `profiles` policy — that specific pattern causes infinite recursion (hit in M1). `is_admin()` bypasses RLS deliberately to avoid it.
+- **Order status is never a stored column.** `orders_with_status` is a `security_invoker` view deriving `active`/`completed` from package state at query time. Adding a column to `orders` does **not** automatically reach this view (`select o.*` fixes the expanded column list at view-creation time) — `CREATE OR REPLACE VIEW` will error if the new column shifts an existing one's position, so a real `DROP VIEW` + `CREATE VIEW` (re-granting `SELECT` afterward — a drop loses existing grants) is usually needed.
+- **`property_id IS NULL` is the literal, sole definition of "needs review."** Once an admin assigns a property the order is done needing review, even if items/tracking are still incomplete — those can keep arriving later without reopening review.
+- **`orders.source`** (manual/email/csv/screenshot/pdf) is origin only — set once at creation, never updated later even when a different pipeline touches the same order afterward.
+- **Pipeline fill/overwrite rules** (in `upsert_order_from_pipeline`, M3 migration): a `source='manual'` order's fields and items are never touched by any automated import. Email fills only currently-null fields. CSV overwrites the header fields it supplies (treated as more authoritative than email) on any non-manual order. Items are wholesale replaced (delete-then-reinsert) on every non-manual import — idempotent, and this is how corrections propagate on re-upload.
+- **Shipping/tracking matching is exact-key lookup, not fuzzy scoring**: order_number first, tracking_number fallback, else `unmatched_updates`. No confidence thresholds anywhere in that path.
+- **`src/lib/supabase/admin.ts`** (service-role client) is for genuine backend/automated operations only (the email pipeline's cron has no browser session) — never import it into user-facing code paths.
+- **`.claude/skills/order-email-parsing/SKILL.md` and `shipment-update-parsing/SKILL.md` are live system prompts, not just docs** — `src/lib/email-pipeline/extract.ts` reads them from disk at runtime. Editing one changes real extraction behavior, not just documentation.
+- **IMAP/Anthropic/Supabase credentials already exist in `.env.local`** (gitignored) — don't ask the user for them again. `GMAIL_IMAP_USER`/`GMAIL_IMAP_APP_PASSWORD`, `ANTHROPIC_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET` (blank — optional locally, required once deployed).
+- **`/api/*` is excluded from the auth-redirect proxy** (`src/proxy.ts`) — route handlers have no browser session to check; the cron route authenticates itself via `CRON_SECRET`.
+- **Mobile overflow bug pattern — hit three separate times (M2, M2.5, M3):** a flex row with a `flex-1` `<select>`/`<input>` next to a `shrink-0` button overflows at 375px unless the flexible element also has `min-w-0` (usually pair with `flex-wrap` as a safety net). Check for this specifically in any new flex row mixing a growable field with a fixed-width button.
+- **Test fixtures:** the fixed local Supabase dev keys hardcoded across `tests/*.spec.ts` are identical every `supabase start` produces (not real secrets) — used to get a service-role client for seeding pipeline-only rows and forcing test-user roles. Always call `forceCleanerRole`/`promoteToAdmin` explicitly rather than relying on the first-signup-becomes-admin bootstrap — parallel test workers race on which signup is "first" in a freshly-reset DB.
+- **Playwright runs with one local retry** (`playwright.config.ts`) — local Supabase Auth occasionally takes longer than 5s to complete a signup under this suite's parallel load (confirmed via server logs: it always succeeds, just not always inside one test's window). A real regression still fails the retry, so this doesn't mask bugs — it absorbs environment-level flakiness only.
+- **`orders.retailer_order_status`** (M3.5) is a raw passthrough of the Amazon Business CSV's "Order Status" column, same treatment as `po_number` — captured only by the CSV pipeline (email extraction doesn't populate it), never interpreted into an app-level enum. The owner billing report uses it (`ilike 'cancelled'`) to exclude cancelled orders entirely. Checked against a real sample export: cancelled orders zero out `Order Net Total` but *not* the per-item `Purchase PPU` — without this column, a report summing item costs would still incorrectly include a cancelled order's items.
+- **No refund signal exists anywhere in the Amazon Business CSV export** (checked against a real sample: no "Refunded" status, no negative item totals). `order_items.is_refunded` (M3.5) is manual-only, admin-toggled per item on the order detail page — refunds are usually one item out of a multi-item order, not the whole order, so this is item-level, not order-level.
+- **Owner billing report totals/filters are computed in a shared TS module** (`src/lib/billing-report.ts`), not a DB view — `fetchBillingLines` does the simple column filters (date range, property, retailer) in SQL and the two exclusions that aren't single-column filters (cancelled orders, refunded items, and owner→property intersection) in application code. The on-screen report and both exports (`/api/reports/owner-billing/export`) call the exact same function, so they can't drift apart.
+- **`write-excel-file` over `exceljs` for Excel export** — `exceljs`'s pinned `archiver@^5` pulls a high-severity transitive `brace-expansion` DoS advisory via `minimatch`/`glob`; `write-excel-file` has a single dependency (`fflate`) with a clean audit. Re-check this tradeoff before reaching for `exceljs` elsewhere in this repo.
+
+### Known gaps — not yet built, not silently skipped
+
+- The email classifier's subject/sender heuristic has never been validated against a real Amazon order-confirmation or shipping-update email — the test inbox has only ever contained Google's own account-setup emails. Check the first real ones closely once they arrive.
+- IMAP polling only runs on manual trigger (`curl .../api/cron/poll-emails`) — nothing is scheduled yet since the app isn't deployed to Vercel (`vercel.json` documents the intended cron schedule for when it is).
+- `imported_emails.raw_storage_path` is never populated — no Supabase Storage integration yet (deliberately deferred; nothing currently reads it).
+- The owner billing report's filters don't include product category yet, even though the real Amazon Business export has a populated `Amazon-Internal Product Category` column that would support it — flagged to the user during M3.5 scoping but not built since it wasn't part of the explicit filter list (property/date/owner/retailer) and would need another CSV-parser + schema change. Revisit if asked.
 
 ## Non-negotiable product rules
 
@@ -14,7 +50,7 @@ A mobile-first order tracking app for a short-term rental property management co
 
 ## Scope discipline
 
-Phase 1 is defined in `docs/order-tracking-app-plan.md`. Explicitly out of scope right now: inventory/reorder features, connected Gmail/Outlook inbox, retailer APIs, native mobile app, analytics beyond basic filters, chat features, PMS/accounting integration.
+Phase 1 is defined in `order-tracking-app-plan.md`. Explicitly out of scope right now: inventory/reorder features, connected Gmail/Outlook inbox, retailer APIs, native mobile app, analytics beyond basic filters, chat features, PMS/accounting integration.
 
 **If a task seems to require one of the above, stop and flag it instead of building around it.** Don't quietly add scope to solve a problem — surface the tradeoff first.
 
@@ -39,10 +75,15 @@ Phase 1 is defined in `docs/order-tracking-app-plan.md`. Explicitly out of scope
 - Commit messages should state what changed and why in one line, not just "update files."
 - Don't force-push over shared history.
 
-## Reusable skills to create (see `.claude/skills/` or your skills directory)
+## Reusable skills (see `.claude/skills/`)
 
-- **order-email-parsing** — instructions for extracting retailer, order number, items, quantities, prices, expected delivery, and tracking info from order confirmation emails across Amazon/Walmart/Home Depot/Costco formats, with explicit guidance to flag low-confidence fields for human review rather than guessing.
-- **shipment-update-parsing** — instructions for classifying and extracting data from shipping/delivery status emails (shipped, out for delivery, delivered, delayed, cancelled) and identifying the matching key (tracking number vs. order number).
+**Already created (M3) — these are live system prompts read at runtime by `src/lib/email-pipeline/extract.ts`, not just reference docs:**
+
+- **order-email-parsing** — extracts order_number/order_date/total_amount/expected_delivery_date from order-confirmation emails. Explicitly forbids extracting line items (Amazon Business confirmations don't include them — items come from CSV import instead).
+- **shipment-update-parsing** — extracts order_number/tracking_number/carrier/status/expected_delivery_date from shipping/status emails, with order_number as the primary match key and tracking_number as fallback.
+
+**Still to create:**
+
 - **screenshot-order-extraction** — vision-based extraction from screenshots/receipt photos, with guidance on handling partial/blurry images gracefully (flag for manual entry rather than fabricating data).
 - **duplicate-order-detection** — fingerprinting logic and edge cases (resent confirmations, near-identical manual re-entries).
 - **order-to-package-matching** — the confidence-scoring logic from the plan doc's Section 4; what counts as a confident match vs. what must go to the review queue.
