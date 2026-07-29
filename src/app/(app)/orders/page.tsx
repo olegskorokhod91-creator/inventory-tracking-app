@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { deriveActiveSubLabel } from "@/lib/package-status";
 
 type OrderRow = {
   id: string;
@@ -11,6 +12,7 @@ type OrderRow = {
   requires_attention: boolean;
   retailers: { name: string } | null;
   properties: { name: string } | null;
+  packages: { status: string }[];
 };
 
 type NeedsReviewRow = {
@@ -37,7 +39,7 @@ export default async function OrdersPage() {
     supabase
       .from("orders_with_status")
       .select(
-        "id, order_number, order_date, total_amount, computed_status, requires_attention, retailers(name), properties(name)",
+        "id, order_number, order_date, total_amount, computed_status, requires_attention, retailers(name), properties(name), packages(status)",
       )
       .not("property_id", "is", null)
       .order("order_date", { ascending: false })
@@ -126,6 +128,11 @@ export default async function OrdersPage() {
                       <span className="rounded-full bg-zinc-200 px-2 py-1 text-xs font-medium capitalize dark:bg-zinc-800">
                         {order.computed_status}
                       </span>
+                      {order.computed_status === "active" && (
+                        <span className="rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-300">
+                          {deriveActiveSubLabel(order.packages)}
+                        </span>
+                      )}
                       {order.requires_attention && (
                         <span className="rounded-full bg-red-100 px-2 py-1 text-xs font-medium text-red-700 dark:bg-red-950 dark:text-red-400">
                           Requires attention

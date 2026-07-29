@@ -87,15 +87,15 @@ test("CSV import creates draft orders, review screen surfaces suggestion, re-upl
   await page.getByText(`#TEST-ORDER-SINGLE-001-${stamp}`).click();
   await expect(page.getByText("This order needs review")).toBeVisible();
   await expect(page.getByText("Paper Towels 12-Pack")).toBeVisible();
-  await expect(page.getByText("expected")).toBeVisible();
-  await expect(page.getByText("No tracking number yet")).toBeVisible();
+  await expect(page.locator('select[name="status"]')).toHaveValue("expected");
+  await expect(page.locator('input[name="tracking_number"]')).toHaveValue("");
 
   const selectedOption = await page
     .locator('select[name="property_id"]')
     .evaluate((el: HTMLSelectElement) => el.options[el.selectedIndex]?.text);
   expect(selectedOption).toBe(propertyAlpha);
 
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("active")).toBeVisible();
   await expect(page.getByText("This order needs review")).not.toBeVisible();
 

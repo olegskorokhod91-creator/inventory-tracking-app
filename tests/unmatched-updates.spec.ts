@@ -122,10 +122,11 @@ test("admin resolves an unmatched update by manually picking the order, and dism
 
   await expect(page.getByText(`TRACK-${stamp}`)).not.toBeVisible();
 
-  // Package now shows the applied tracking info.
+  // Package now shows the applied tracking info in the (M4) editable form.
   await page.goto(`/orders/${order!.id}`);
-  await expect(page.getByText(`Tracking: TRACK-${stamp} (UPS)`)).toBeVisible();
-  await expect(page.getByText("shipped")).toBeVisible();
+  await expect(page.locator('input[name="tracking_number"]')).toHaveValue(`TRACK-${stamp}`);
+  await expect(page.locator('input[name="carrier"]')).toHaveValue("UPS");
+  await expect(page.locator('select[name="status"]')).toHaveValue("shipped");
 
   // Dismiss the second one without applying anything.
   await page.goto("/unmatched-updates");

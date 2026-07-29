@@ -85,6 +85,63 @@ export async function setItemRefunded(itemId: string, refunded: boolean) {
   if (item) revalidatePath(`/orders/${item.order_id}`);
 }
 
+// requires_attention is excluded deliberately - that package status is
+// earned only through a cleaner's own confirmation-flow report (M5), not
+// something an admin sets by hand.
+const ADMIN_SETTABLE_PACKAGE_STATUSES = [
+  "expected",
+  "shipped",
+  "out_for_delivery",
+  "delayed",
+  "delivered",
+  "cancelled",
+  "confirmed_received",
+];
+
+export async function updatePackage(packageId: string, formData: FormData) {
+  await requireAdmin();
+
+  const status = String(formData.get("status") ?? "");
+  if (!ADMIN_SETTABLE_PACKAGE_STATUSES.includes(status)) return;
+
+  const trackingNumber = String(formData.get("tracking_number") ?? "").trim();
+  const carrier = String(formData.get("carrier") ?? "").trim();
+  const expectedDeliveryDate = String(formData.get("expected_delivery_date") ?? "").trim();
+
+  const supabase = await createClient();
+  const { data: existing } = await supabase
+    .from("packages")
+    .select("order_id, status")
+    .eq("id", packageId)
+    .single();
+  if (!existing) return;
+
+  const update: Record<string, unknown> = {
+    status,
+    tracking_number: trackingNumber || null,
+    carrier: carrier || null,
+    expected_delivery_date: expectedDeliveryDate || null,
+  };
+
+  // Only stamp the transition timestamp/source when actually entering that
+  // status this save, not on every edit while it happens to stay there
+  // (e.g. fixing a typo'd carrier on an already-delivered package shouldn't
+  // reset delivered_at).
+  if (status === "delivered" && existing.status !== "delivered") {
+    update.delivered_at = new Date().toISOString();
+    update.delivered_source = "manual";
+  }
+  if (status === "confirmed_received" && existing.status !== "confirmed_received") {
+    update.confirmed_at = new Date().toISOString();
+    update.confirmed_source = "admin_manual";
+  }
+
+  await supabase.from("packages").update(update).eq("id", packageId);
+
+  revalidatePath(`/orders/${existing.order_id}`);
+  revalidatePath("/orders");
+}
+
 export async function updateOrder(orderId: string, formData: FormData) {
   await requireAdmin();
 

@@ -69,8 +69,8 @@ test("admin creates a manual order and it shows correct derived status", async (
   await expect(page.getByText("active")).toBeVisible();
   await expect(page.getByText("Paper towels")).toBeVisible();
   await expect(page.getByText("x2")).toBeVisible();
-  await expect(page.getByText("expected")).toBeVisible();
-  await expect(page.getByText("No tracking number yet")).toBeVisible();
+  await expect(page.locator('select[name="status"]')).toHaveValue("expected");
+  await expect(page.locator('input[name="tracking_number"]')).toHaveValue("");
 
   await page.goto("/orders");
   await expect(page.getByText(`Amazon — ${propertyName}`)).toBeVisible();

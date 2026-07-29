@@ -2,8 +2,18 @@ import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { suggestPropertyMatch } from "@/lib/property-suggestion";
-import { updateOrder } from "../actions";
+import { updateOrder, updatePackage } from "../actions";
 import { RefundToggle } from "./RefundToggle";
+
+const PACKAGE_STATUS_OPTIONS = [
+  "expected",
+  "shipped",
+  "out_for_delivery",
+  "delayed",
+  "delivered",
+  "cancelled",
+  "confirmed_received",
+];
 
 export default async function OrderDetailPage({
   params,
@@ -37,7 +47,8 @@ export default async function OrderDetailPage({
     supabase
       .from("packages")
       .select("id, tracking_number, carrier, status, expected_delivery_date")
-      .eq("order_id", id),
+      .eq("order_id", id)
+      .order("created_at"),
   ]);
 
   const updateOrderWithId = updateOrder.bind(null, id);
@@ -189,22 +200,72 @@ export default async function OrderDetailPage({
 
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">Packages</h2>
-        <ul className="flex flex-col gap-2">
-          {packages?.map((pkg) => (
-            <li
-              key={pkg.id}
-              className="rounded-md border border-black/10 px-3 py-2 dark:border-white/10"
-            >
-              <p className="font-medium capitalize">
-                {pkg.status.replaceAll("_", " ")}
-              </p>
-              <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                {pkg.tracking_number
-                  ? `Tracking: ${pkg.tracking_number}${pkg.carrier ? ` (${pkg.carrier})` : ""}`
-                  : "No tracking number yet"}
-              </p>
-            </li>
-          ))}
+        <ul className="flex flex-col gap-3">
+          {packages?.map((pkg) => {
+            const updatePackageWithId = updatePackage.bind(null, pkg.id);
+            return (
+              <li
+                key={pkg.id}
+                className="rounded-md border border-black/10 p-3 dark:border-white/10"
+              >
+                <form action={updatePackageWithId} className="flex flex-col gap-3">
+                  <label className="flex flex-col gap-1 text-sm font-medium">
+                    Status
+                    <select
+                      name="status"
+                      defaultValue={pkg.status}
+                      className="h-11 rounded-md border border-black/15 px-3 text-base font-normal capitalize dark:border-white/20"
+                    >
+                      {PACKAGE_STATUS_OPTIONS.map((status) => (
+                        <option key={status} value={status} className="capitalize">
+                          {status.replaceAll("_", " ")}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-xs text-zinc-600 dark:text-zinc-400">
+                      &quot;Confirmed received&quot; marks this package received without
+                      cleaner confirmation — only use it for a phone/in-person report.
+                    </span>
+                  </label>
+
+                  <label className="flex flex-col gap-1 text-sm font-medium">
+                    Tracking number
+                    <input
+                      name="tracking_number"
+                      defaultValue={pkg.tracking_number ?? ""}
+                      className="h-11 rounded-md border border-black/15 px-3 text-base font-normal dark:border-white/20"
+                    />
+                  </label>
+
+                  <label className="flex flex-col gap-1 text-sm font-medium">
+                    Carrier
+                    <input
+                      name="carrier"
+                      defaultValue={pkg.carrier ?? ""}
+                      className="h-11 rounded-md border border-black/15 px-3 text-base font-normal dark:border-white/20"
+                    />
+                  </label>
+
+                  <label className="flex flex-col gap-1 text-sm font-medium">
+                    Expected delivery date
+                    <input
+                      name="expected_delivery_date"
+                      type="date"
+                      defaultValue={pkg.expected_delivery_date ?? ""}
+                      className="h-11 rounded-md border border-black/15 px-3 text-base font-normal dark:border-white/20"
+                    />
+                  </label>
+
+                  <button
+                    type="submit"
+                    className="h-11 rounded-md border border-black/15 text-base font-medium dark:border-white/20"
+                  >
+                    Save package
+                  </button>
+                </form>
+              </li>
+            );
+          })}
         </ul>
       </section>
     </div>
