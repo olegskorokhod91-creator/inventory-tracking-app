@@ -207,6 +207,65 @@ test("cleaner reports damaged items with quantities, a note, and a photo - trigg
   await cleanerContext.close();
 });
 
+test("a photo over the 5MB bucket limit is compressed client-side and still uploads", async ({ browser }) => {
+  const stamp = `${Date.now()}-${test.info().project.name}`;
+  const adminName = `Admin ${stamp}`;
+  const cleanerName = `Cleaner ${stamp}`;
+  const propertyName = `Compress Property ${stamp}`;
+
+  const adminContext = await browser.newContext();
+  const adminPage = await adminContext.newPage();
+  await signUp(adminPage, adminName, `admin-${stamp}@example.com`);
+  await promoteToAdmin(adminName);
+  await adminPage.goto("/properties");
+
+  const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const { data: property } = await serviceClient
+    .from("properties")
+    .insert({ name: propertyName, address: "1 Compress St" })
+    .select("id")
+    .single();
+
+  const cleanerContext = await browser.newContext();
+  const cleanerPage = await cleanerContext.newPage();
+  await signUp(cleanerPage, cleanerName, `cleaner-${stamp}@example.com`);
+
+  const { data: cleaner } = await serviceClient.from("profiles").select("id").eq("name", cleanerName).single();
+  await serviceClient
+    .from("cleaner_property_assignments")
+    .insert({ property_id: property!.id, user_id: cleaner!.id });
+
+  const { packageId } = await seedDeliveredPackage(serviceClient, property!.id as string, `COMPRESS-${stamp}`);
+
+  await cleanerPage.goto(`/confirmations/${packageId}`);
+  await cleanerPage.getByRole("button", { name: "Damaged items" }).click();
+  // Source fixture is ~7.8MB - over the bucket's 5MB cap. If client-side
+  // compression didn't run (or failed), the upload itself would error and
+  // the confirmation would never reach package_confirmations at all.
+  await cleanerPage
+    .locator('input[type="file"]')
+    .setInputFiles(path.join(process.cwd(), "tests", "fixtures", "large-confirmation-photo.jpg"));
+  await expect(cleanerPage.getByText("Processing photo…")).not.toBeVisible({ timeout: 15000 });
+  await cleanerPage.getByRole("button", { name: "Submit" }).click();
+  await expect(cleanerPage).toHaveURL("/confirmations");
+
+  const { data: confirmation } = await serviceClient
+    .from("package_confirmations")
+    .select("photo_path")
+    .eq("package_id", packageId)
+    .single();
+  expect(confirmation?.photo_path).not.toBeNull();
+
+  const { data: downloaded, error: downloadError } = await serviceClient.storage
+    .from("confirmation-photos")
+    .download(confirmation!.photo_path as string);
+  expect(downloadError).toBeNull();
+  expect(downloaded!.size).toBeLessThanOrEqual(5 * 1024 * 1024);
+
+  await adminContext.close();
+  await cleanerContext.close();
+});
+
 test("cleaners only see and can confirm packages for assigned properties, never others", async ({ browser }) => {
   const stamp = `${Date.now()}-${test.info().project.name}`;
   const adminName = `Admin ${stamp}`;

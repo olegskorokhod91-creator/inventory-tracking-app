@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { confirmPackageDelivery } from "../actions";
+import { compressImageIfNeeded } from "@/lib/compress-image";
 
 type Item = { orderItemId: string; name: string; expectedQuantity: number };
 
@@ -31,7 +32,21 @@ export function ConfirmationForm({
   const [itemNotes, setItemNotes] = useState<Record<string, string>>({});
   const [note, setNote] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
+  const [isCompressingPhoto, setIsCompressingPhoto] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function handlePhotoChange(file: File | null) {
+    if (!file) {
+      setPhoto(null);
+      return;
+    }
+    setIsCompressingPhoto(true);
+    try {
+      setPhoto(await compressImageIfNeeded(file));
+    } finally {
+      setIsCompressingPhoto(false);
+    }
+  }
 
   function adjust(itemId: string, delta: number) {
     setQuantities((prev) => ({
@@ -207,16 +222,22 @@ export function ConfirmationForm({
           type="file"
           accept="image/*"
           capture="environment"
-          onChange={(e) => setPhoto(e.target.files?.[0] ?? null)}
+          disabled={isCompressingPhoto}
+          onChange={(e) => handlePhotoChange(e.target.files?.[0] ?? null)}
           className="text-base"
         />
+        {isCompressingPhoto && (
+          <span className="text-xs text-zinc-600 dark:text-zinc-400">
+            Processing photo…
+          </span>
+        )}
       </label>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       <button
         type="button"
-        disabled={isPending}
+        disabled={isPending || isCompressingPhoto}
         onClick={() => submit(outcome)}
         className="h-11 rounded-md bg-black text-base font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black"
       >
