@@ -11,6 +11,33 @@ type DraftItem = {
   unit_price?: string;
 };
 
+type FieldChange = { field: string; oldValue: unknown; newValue: unknown };
+
+// Records who changed what on an admin hand-edit path (order fields, package
+// manual overrides, refund toggle) - the three write paths in this file that
+// have no other audit trail, unlike the pipeline/confirmation tables. Only
+// inserts a row per field that actually changed value.
+async function logAuditChanges(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  actorId: string,
+  tableName: string,
+  rowId: string,
+  changes: FieldChange[],
+) {
+  const rows = changes
+    .filter((c) => c.oldValue !== c.newValue)
+    .map((c) => ({
+      actor_id: actorId,
+      table_name: tableName,
+      row_id: rowId,
+      field_name: c.field,
+      old_value: c.oldValue === null || c.oldValue === undefined ? null : String(c.oldValue),
+      new_value: c.newValue === null || c.newValue === undefined ? null : String(c.newValue),
+    }));
+
+  if (rows.length > 0) await supabase.from("audit_log").insert(rows);
+}
+
 export async function createOrder(formData: FormData) {
   await requireAdmin();
 
@@ -68,12 +95,12 @@ export async function createOrder(formData: FormData) {
 }
 
 export async function setItemRefunded(itemId: string, refunded: boolean) {
-  await requireAdmin();
+  const profile = await requireAdmin();
 
   const supabase = await createClient();
   const { data: item } = await supabase
     .from("order_items")
-    .select("order_id")
+    .select("order_id, is_refunded")
     .eq("id", itemId)
     .single();
 
@@ -82,7 +109,12 @@ export async function setItemRefunded(itemId: string, refunded: boolean) {
     .update({ is_refunded: refunded })
     .eq("id", itemId);
 
-  if (item) revalidatePath(`/orders/${item.order_id}`);
+  if (item) {
+    await logAuditChanges(supabase, profile.id, "order_items", itemId, [
+      { field: "is_refunded", oldValue: item.is_refunded, newValue: refunded },
+    ]);
+    revalidatePath(`/orders/${item.order_id}`);
+  }
 }
 
 // requires_attention is excluded deliberately - that package status is
@@ -99,7 +131,7 @@ const ADMIN_SETTABLE_PACKAGE_STATUSES = [
 ];
 
 export async function updatePackage(packageId: string, formData: FormData) {
-  await requireAdmin();
+  const profile = await requireAdmin();
 
   const status = String(formData.get("status") ?? "");
   if (!ADMIN_SETTABLE_PACKAGE_STATUSES.includes(status)) return;
@@ -111,7 +143,7 @@ export async function updatePackage(packageId: string, formData: FormData) {
   const supabase = await createClient();
   const { data: existing } = await supabase
     .from("packages")
-    .select("order_id, status")
+    .select("order_id, status, tracking_number, carrier, expected_delivery_date")
     .eq("id", packageId)
     .single();
   if (!existing) return;
@@ -138,12 +170,23 @@ export async function updatePackage(packageId: string, formData: FormData) {
 
   await supabase.from("packages").update(update).eq("id", packageId);
 
+  await logAuditChanges(supabase, profile.id, "packages", packageId, [
+    { field: "status", oldValue: existing.status, newValue: update.status },
+    { field: "tracking_number", oldValue: existing.tracking_number, newValue: update.tracking_number },
+    { field: "carrier", oldValue: existing.carrier, newValue: update.carrier },
+    {
+      field: "expected_delivery_date",
+      oldValue: existing.expected_delivery_date,
+      newValue: update.expected_delivery_date,
+    },
+  ]);
+
   revalidatePath(`/orders/${existing.order_id}`);
   revalidatePath("/orders");
 }
 
 export async function updateOrder(orderId: string, formData: FormData) {
-  await requireAdmin();
+  const profile = await requireAdmin();
 
   const retailerId = String(formData.get("retailer_id") ?? "");
   const propertyId = String(formData.get("property_id") ?? "");
@@ -153,16 +196,31 @@ export async function updateOrder(orderId: string, formData: FormData) {
   if (!retailerId || !propertyId || !orderDate) return;
 
   const supabase = await createClient();
-  await supabase
+  const { data: existing } = await supabase
     .from("orders")
-    .update({
-      retailer_id: retailerId,
-      property_id: propertyId,
-      order_number: orderNumber || null,
-      order_date: orderDate,
-      total_amount: totalAmountRaw ? Number(totalAmountRaw) : null,
-    })
-    .eq("id", orderId);
+    .select("retailer_id, property_id, order_number, order_date, total_amount")
+    .eq("id", orderId)
+    .single();
+
+  const update = {
+    retailer_id: retailerId,
+    property_id: propertyId,
+    order_number: orderNumber || null,
+    order_date: orderDate,
+    total_amount: totalAmountRaw ? Number(totalAmountRaw) : null,
+  };
+
+  await supabase.from("orders").update(update).eq("id", orderId);
+
+  if (existing) {
+    await logAuditChanges(supabase, profile.id, "orders", orderId, [
+      { field: "retailer_id", oldValue: existing.retailer_id, newValue: update.retailer_id },
+      { field: "property_id", oldValue: existing.property_id, newValue: update.property_id },
+      { field: "order_number", oldValue: existing.order_number, newValue: update.order_number },
+      { field: "order_date", oldValue: existing.order_date, newValue: update.order_date },
+      { field: "total_amount", oldValue: existing.total_amount, newValue: update.total_amount },
+    ]);
+  }
 
   revalidatePath(`/orders/${orderId}`);
   revalidatePath("/orders");
