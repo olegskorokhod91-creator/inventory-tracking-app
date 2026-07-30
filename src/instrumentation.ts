@@ -12,7 +12,13 @@ export async function register() {
   if (!dsn) return;
 
   if (process.env.NEXT_RUNTIME === "nodejs" || process.env.NEXT_RUNTIME === "edge") {
-    Sentry.init({ dsn, tracesSampleRate: 1 });
+    // 0, not 1: performance tracing was never what was asked for (just
+    // error visibility), and full tracing has a real, documented cost on
+    // Vercel serverless specifically - the function has to flush trace
+    // data to Sentry's ingest endpoint before it's allowed to freeze,
+    // adding real latency to every request. Error capture (captureException,
+    // captureRequestError) is unaffected by this setting either way.
+    Sentry.init({ dsn, tracesSampleRate: 0 });
   }
 }
 
