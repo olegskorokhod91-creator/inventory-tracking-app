@@ -12,7 +12,7 @@ export default async function AppLayout({
   return (
     <div className="flex min-h-screen flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-black/10 px-4 py-3 dark:border-white/10">
-        <nav className="flex items-center gap-4 text-sm font-medium">
+        <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-medium">
           <Link href="/confirmations">Confirmations</Link>
           <Link href="/properties">Properties</Link>
           {profile?.role === "admin" && (
