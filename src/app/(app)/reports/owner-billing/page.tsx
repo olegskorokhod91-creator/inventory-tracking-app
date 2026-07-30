@@ -107,22 +107,28 @@ export default async function OwnerBillingReportPage({
         className="flex flex-col gap-3 rounded-lg border border-black/10 p-4 dark:border-white/10"
       >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-sm font-medium">
-            Property (multi-select — none selected means all)
-            <select
-              name="property_id"
-              multiple
-              defaultValue={filters.propertyIds ?? []}
-              size={5}
-              className="rounded-md border border-black/15 px-3 py-2 text-base font-normal dark:border-white/20"
-            >
+          <fieldset className="flex flex-col gap-1">
+            <legend className="text-sm font-medium">
+              Properties (none checked means all)
+            </legend>
+            <div className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-md border border-black/15 p-2 dark:border-white/20">
               {properties?.map((p) => (
-                <option key={p.id} value={p.id}>
+                <label
+                  key={p.id}
+                  className="flex items-center gap-2 py-0.5 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    name="property_id"
+                    value={p.id}
+                    defaultChecked={filters.propertyIds?.includes(p.id) ?? false}
+                    className="h-4 w-4 shrink-0"
+                  />
                   {p.name}
-                </option>
+                </label>
               ))}
-            </select>
-          </label>
+            </div>
+          </fieldset>
 
           <div className="flex flex-col gap-3">
             <label className="flex flex-col gap-1 text-sm font-medium">

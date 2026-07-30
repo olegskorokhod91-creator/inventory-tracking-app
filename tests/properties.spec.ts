@@ -88,10 +88,13 @@ test("cleaners only see properties they're assigned to", async ({
     cleanerPage.getByText(unassignedPropertyName),
   ).not.toBeVisible();
 
-  // Cleaner has no admin affordances (no add-property form, no Users nav).
+  // Cleaner has no admin affordances (no add-property form, no Users nav
+  // link once the menu is opened - not just "not visible because the menu
+  // happens to be closed").
   await expect(
     cleanerPage.getByRole("button", { name: "Add property" }),
   ).not.toBeVisible();
+  await cleanerPage.getByRole("button", { name: "Menu" }).click();
   await expect(
     cleanerPage.getByRole("link", { name: "Users" }),
   ).not.toBeVisible();
