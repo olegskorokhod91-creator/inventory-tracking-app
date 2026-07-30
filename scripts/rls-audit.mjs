@@ -56,14 +56,25 @@ function isBlocked({ data, error }) {
   return !!error || (Array.isArray(data) && data.length === 0);
 }
 
-async function signUpAndSignIn(email) {
-  const anon = createClient(URL, ANON_KEY);
+// Uses the service-role admin API to create the account pre-confirmed,
+// rather than public signUp() - sidesteps two problems at once: hosted
+// GoTrue's stricter email-format validation (rejects @example.com outright,
+// unlike local), and email-confirmation-required projects, where a plain
+// signUp() + immediate signInWithPassword() would fail until a real
+// confirmation link is clicked. This is exactly the "genuine automated
+// backend operation" service-role use case, not a workaround.
+async function createAndSignIn(email) {
   const password = `AuditPass!${stamp}`;
-  const { error: signUpError } = await anon.auth.signUp({ email, password });
-  if (signUpError) throw signUpError;
+  const { data: created, error: createError } = await admin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+  });
+  if (createError) throw createError;
+  const anon = createClient(URL, ANON_KEY);
   const { error: signInError } = await anon.auth.signInWithPassword({ email, password });
   if (signInError) throw signInError;
-  return anon;
+  return { client: anon, user: created.user };
 }
 
 async function main() {
@@ -81,21 +92,29 @@ async function main() {
     .select("id")
     .single();
 
-  const cleanerAClient = await signUpAndSignIn(`rls-audit-cleaner-a-${stamp}@example.com`);
-  const cleanerBClient = await signUpAndSignIn(`rls-audit-cleaner-b-${stamp}@example.com`);
-  const adminTestClient = await signUpAndSignIn(`rls-audit-admin-${stamp}@example.com`);
+  // rls-audit.test isn't a real deliverable domain, but unlike example.com
+  // (an RFC 2606 reserved domain many validators specifically denylist as
+  // obviously-fake) it passes hosted GoTrue's format check - and since
+  // accounts are created via the admin API with email_confirm: true, no
+  // actual delivery is ever attempted anyway.
+  const emailDomain = process.env.AUDIT_EMAIL_DOMAIN ?? "rls-audit.test";
+  const { client: cleanerAClient, user: cleanerAUser } = await createAndSignIn(
+    `rls-audit-cleaner-a-${stamp}@${emailDomain}`,
+  );
+  const { client: cleanerBClient, user: cleanerBUser } = await createAndSignIn(
+    `rls-audit-cleaner-b-${stamp}@${emailDomain}`,
+  );
+  const { client: adminTestClient, user: adminTestUser } = await createAndSignIn(
+    `rls-audit-admin-${stamp}@${emailDomain}`,
+  );
 
-  const { data: cleanerAUser } = await cleanerAClient.auth.getUser();
-  const { data: cleanerBUser } = await cleanerBClient.auth.getUser();
-  const { data: adminTestUser } = await adminTestClient.auth.getUser();
-
-  await admin.from("profiles").update({ role: "admin" }).eq("id", adminTestUser.user.id);
+  await admin.from("profiles").update({ role: "admin" }).eq("id", adminTestUser.id);
   await admin
     .from("cleaner_property_assignments")
-    .insert({ property_id: propA.id, user_id: cleanerAUser.user.id });
+    .insert({ property_id: propA.id, user_id: cleanerAUser.id });
   await admin
     .from("cleaner_property_assignments")
-    .insert({ property_id: propB.id, user_id: cleanerBUser.user.id });
+    .insert({ property_id: propB.id, user_id: cleanerBUser.id });
 
   const { data: retailer } = await admin.from("retailers").select("id").eq("name", "Amazon").single();
 
@@ -264,7 +283,7 @@ async function main() {
   await admin.storage.from("confirmation-photos").remove([`${orderA.packageId}/audit.jpg`, `${orderB.packageId}/audit.jpg`]);
   await admin.from("orders").delete().in("id", [orderA.orderId, orderB.orderId]);
   await admin.from("properties").delete().in("id", [propA.id, propB.id]);
-  for (const u of [cleanerAUser.user, cleanerBUser.user, adminTestUser.user]) {
+  for (const u of [cleanerAUser, cleanerBUser, adminTestUser]) {
     await admin.auth.admin.deleteUser(u.id);
   }
   console.log("\nCleanup complete — all audit accounts/properties/orders removed.");
