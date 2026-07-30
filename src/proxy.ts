@@ -58,6 +58,13 @@ export const config = {
   matcher: [
     // /api/* is excluded - those routes (e.g. the cron-triggered email
     // poller) have no browser session to check and handle their own auth.
-    "/((?!api/|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    // manifest.webmanifest/icon/apple-icon (M8's PWA setup) must also be
+    // public - a browser/OS fetches these to determine installability
+    // before any login happens, and a redirect to the /login HTML page
+    // instead of real JSON/image content breaks that outright. The
+    // icon-*.png routes are already covered by the .png suffix exclusion
+    // below; manifest.webmanifest and the extensionless icon/apple-icon
+    // aren't, so they're listed explicitly.
+    "/((?!api/|_next/static|_next/image|favicon.ico|manifest.webmanifest|icon$|apple-icon$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
