@@ -1,5 +1,6 @@
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { CreateCleanerForm } from "./CreateCleanerForm";
 
 export default async function UsersPage() {
   await requireAdmin();
@@ -28,6 +29,8 @@ export default async function UsersPage() {
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-8">
       <h1 className="text-2xl font-semibold">Users</h1>
+
+      <CreateCleanerForm />
 
       <ul className="flex flex-col gap-3">
         {profiles?.map((profile) => (
