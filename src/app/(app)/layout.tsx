@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getCurrentProfile } from "@/lib/auth";
 import { logout } from "@/app/actions/auth";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export default async function AppLayout({
   children,
@@ -32,9 +33,9 @@ export default async function AppLayout({
             {profile?.name} ({profile?.role})
           </span>
           <form action={logout}>
-            <button type="submit" className="underline">
+            <SubmitButton pendingText="Logging out…" className="underline">
               Log out
-            </button>
+            </SubmitButton>
           </form>
         </div>
       </header>

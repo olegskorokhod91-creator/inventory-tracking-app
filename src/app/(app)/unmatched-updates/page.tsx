@@ -1,6 +1,7 @@
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUnmatchedUpdate, dismissUnmatchedUpdate } from "./actions";
+import { SubmitButton } from "@/components/SubmitButton";
 
 type UnmatchedRow = {
   id: string;
@@ -93,21 +94,21 @@ export default async function UnmatchedUpdatesPage() {
                       </option>
                     ))}
                   </select>
-                  <button
-                    type="submit"
-                    className="h-11 shrink-0 rounded-md bg-black px-4 text-sm font-medium text-white dark:bg-white dark:text-black"
+                  <SubmitButton
+                    pendingText="Applying…"
+                    className="h-11 shrink-0 rounded-md bg-black px-4 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black"
                   >
                     Apply
-                  </button>
+                  </SubmitButton>
                 </form>
 
                 <form action={dismissUpdate}>
-                  <button
-                    type="submit"
-                    className="text-sm font-medium text-red-600 underline"
+                  <SubmitButton
+                    pendingText="Dismissing…"
+                    className="text-sm font-medium text-red-600 underline disabled:opacity-50"
                   >
                     Dismiss
-                  </button>
+                  </SubmitButton>
                 </form>
               </li>
             );

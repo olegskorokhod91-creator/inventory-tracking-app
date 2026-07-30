@@ -1,6 +1,7 @@
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createOwner } from "./actions";
+import { SubmitButton } from "@/components/SubmitButton";
 
 type OwnerRow = {
   id: string;
@@ -75,12 +76,12 @@ export default async function OwnersPage() {
           placeholder="Contact phone (optional)"
           className="h-11 rounded-md border border-black/15 px-3 text-base dark:border-white/20"
         />
-        <button
-          type="submit"
-          className="h-11 rounded-md bg-black text-base font-medium text-white dark:bg-white dark:text-black"
+        <SubmitButton
+          pendingText="Adding…"
+          className="h-11 rounded-md bg-black text-base font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black"
         >
           Add owner
-        </button>
+        </SubmitButton>
       </form>
     </div>
   );

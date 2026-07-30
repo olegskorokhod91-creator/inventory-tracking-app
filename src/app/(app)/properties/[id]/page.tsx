@@ -3,6 +3,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { assignCleaner, unassignCleaner, updateProperty } from "../actions";
 import { SupplyRequestForm } from "./SupplyRequestForm";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export default async function PropertyDetailPage({
   params,
@@ -136,12 +137,12 @@ export default async function PropertyDetailPage({
                 ))}
               </select>
             </label>
-            <button
-              type="submit"
-              className="h-11 rounded-md bg-black text-base font-medium text-white dark:bg-white dark:text-black"
+            <SubmitButton
+              pendingText="Saving…"
+              className="h-11 rounded-md bg-black text-base font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black"
             >
               Save
-            </button>
+            </SubmitButton>
           </form>
 
           <section className="flex flex-col gap-3">
@@ -156,12 +157,12 @@ export default async function PropertyDetailPage({
                   >
                     <span>{a.profiles?.name}</span>
                     <form action={unassignCleaner.bind(null, id, a.user_id)}>
-                      <button
-                        type="submit"
-                        className="text-sm font-medium text-red-600 underline"
+                      <SubmitButton
+                        pendingText="Removing…"
+                        className="text-sm font-medium text-red-600 underline disabled:opacity-50"
                       >
                         Remove
-                      </button>
+                      </SubmitButton>
                     </form>
                   </li>
                 ))}
@@ -190,12 +191,12 @@ export default async function PropertyDetailPage({
                     </option>
                   ))}
                 </select>
-                <button
-                  type="submit"
-                  className="h-11 shrink-0 rounded-md border border-black/15 px-4 text-base font-medium dark:border-white/20"
+                <SubmitButton
+                  pendingText="Assigning…"
+                  className="h-11 shrink-0 rounded-md border border-black/15 px-4 text-base font-medium disabled:opacity-50 dark:border-white/20"
                 >
                   Assign
-                </button>
+                </SubmitButton>
               </form>
             )}
           </section>

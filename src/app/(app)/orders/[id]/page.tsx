@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { suggestPropertyMatch } from "@/lib/property-suggestion";
 import { updateOrder, updatePackage } from "../actions";
 import { RefundToggle } from "./RefundToggle";
+import { SubmitButton } from "@/components/SubmitButton";
 
 type PackageRow = {
   id: string;
@@ -221,12 +222,12 @@ export default async function OrderDetailPage({
           />
         </label>
 
-        <button
-          type="submit"
-          className="h-11 rounded-md bg-black text-base font-medium text-white dark:bg-white dark:text-black"
+        <SubmitButton
+          pendingText="Saving…"
+          className="h-11 rounded-md bg-black text-base font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black"
         >
           Save
-        </button>
+        </SubmitButton>
       </form>
 
       <section className="flex flex-col gap-3">
@@ -338,12 +339,12 @@ export default async function OrderDetailPage({
                     />
                   </label>
 
-                  <button
-                    type="submit"
-                    className="h-11 rounded-md border border-black/15 text-base font-medium dark:border-white/20"
+                  <SubmitButton
+                    pendingText="Saving…"
+                    className="h-11 rounded-md border border-black/15 text-base font-medium disabled:opacity-50 dark:border-white/20"
                   >
                     Save package
-                  </button>
+                  </SubmitButton>
                 </form>
 
                 {(confirmationsByPackage.get(pkg.id) ?? []).length > 0 && (

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { createOrder } from "../actions";
+import { SubmitButton } from "@/components/SubmitButton";
 
 type Item = { name: string; expected_quantity: string; unit_price: string };
 type OpenRequest = {
@@ -235,12 +236,12 @@ export function OrderForm({
         </button>
       </fieldset>
 
-      <button
-        type="submit"
-        className="h-11 rounded-md bg-black text-base font-medium text-white dark:bg-white dark:text-black"
+      <SubmitButton
+        pendingText="Creating…"
+        className="h-11 rounded-md bg-black text-base font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black"
       >
         Create order
-      </button>
+      </SubmitButton>
     </form>
   );
 }

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { createProperty } from "./actions";
 import { overdueCutoffIso, formatElapsed } from "@/lib/confirmation-reminders";
+import { SubmitButton } from "@/components/SubmitButton";
 
 type OverduePackageRow = {
   id: string;
@@ -175,12 +176,12 @@ export default async function PropertiesPage() {
             required
             className="h-11 rounded-md border border-black/15 px-3 text-base dark:border-white/20"
           />
-          <button
-            type="submit"
-            className="h-11 rounded-md bg-black text-base font-medium text-white dark:bg-white dark:text-black"
+          <SubmitButton
+            pendingText="Adding…"
+            className="h-11 rounded-md bg-black text-base font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black"
           >
             Add property
-          </button>
+          </SubmitButton>
         </form>
       )}
     </div>

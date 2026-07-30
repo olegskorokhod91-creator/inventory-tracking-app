@@ -12,7 +12,7 @@ export function SupplyRequestForm({
   propertyId: string;
   existingItemNames: string[];
 }) {
-  const [state, formAction] = useActionState(
+  const [state, formAction, pending] = useActionState(
     createSupplyRequests.bind(null, propertyId),
     undefined,
   );
@@ -184,10 +184,10 @@ export function SupplyRequestForm({
 
       <button
         type="submit"
-        disabled={allItems.length === 0}
+        disabled={allItems.length === 0 || pending}
         className="h-11 rounded-md bg-black text-base font-medium text-white disabled:opacity-40 dark:bg-white dark:text-black"
       >
-        Submit request
+        {pending ? "Submitting…" : "Submit request"}
       </button>
     </form>
   );

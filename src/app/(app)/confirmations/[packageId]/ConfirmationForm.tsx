@@ -120,7 +120,7 @@ export function ConfirmationForm({
             onClick={() => submit("all_correct")}
             className="h-14 rounded-lg bg-green-600 text-lg font-semibold text-white disabled:opacity-50"
           >
-            Everything received correctly
+            {isPending ? "Confirming…" : "Everything received correctly"}
           </button>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {PROBLEM_OUTCOMES.map((o) => (
@@ -241,7 +241,7 @@ export function ConfirmationForm({
         onClick={() => submit(outcome)}
         className="h-11 rounded-md bg-black text-base font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black"
       >
-        Submit
+        {isPending ? "Submitting…" : "Submit"}
       </button>
     </div>
   );

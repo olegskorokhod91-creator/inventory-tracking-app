@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
@@ -8,7 +9,14 @@ export type Profile = {
   active: boolean;
 };
 
-export async function getCurrentProfile(): Promise<Profile | null> {
+// Wrapped in React's cache() so repeated calls within one request (the
+// (app) layout calls this on every page, and most pages call it again
+// themselves via requireAdmin/getCurrentProfile) share one result instead
+// of each re-running two sequential Supabase round trips (auth.getUser +
+// the profiles lookup). Request-scoped, not a cross-user/cross-request
+// cache - this was a real, measurable contributor to slow page loads, not
+// just a micro-optimization.
+export const getCurrentProfile = cache(async (): Promise<Profile | null> => {
   const supabase = await createClient();
   const {
     data: { user },
@@ -23,7 +31,7 @@ export async function getCurrentProfile(): Promise<Profile | null> {
     .single();
 
   return profile as Profile | null;
-}
+});
 
 // Gates admin-only pages at the app layer. This is a UX nicety, not a
 // substitute for RLS — the database policies are the real enforcement
