@@ -118,3 +118,21 @@ export async function createSupplyRequests(
   revalidatePath(`/properties/${propertyId}`);
   return { success: !error };
 }
+
+// RLS ("Cleaners can delete their own open requests") is the actual gate -
+// own row, and only while still untouched (not ordered, not resolved). An
+// admin has acted on anything past that point, so it's no longer just a
+// draft mistake to quietly remove.
+export async function cancelSupplyRequest(
+  requestId: string,
+  propertyId: string,
+): Promise<{ success: boolean }> {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("supply_requests")
+    .delete()
+    .eq("id", requestId);
+
+  revalidatePath(`/properties/${propertyId}`);
+  return { success: !error };
+}

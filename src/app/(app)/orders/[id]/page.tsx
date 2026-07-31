@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { suggestPropertyMatch } from "@/lib/property-suggestion";
 import { updateOrder, updatePackage } from "../actions";
 import { RefundToggle } from "./RefundToggle";
+import { RemoveItemButton } from "./RemoveItemButton";
 import { SubmitButton } from "@/components/SubmitButton";
 
 type PackageRow = {
@@ -248,6 +249,7 @@ export default async function OrderDetailPage({
                     {item.unit_price != null ? ` · $${item.unit_price}` : ""}
                   </span>
                   <RefundToggle itemId={item.id} refunded={item.is_refunded} />
+                  <RemoveItemButton itemId={item.id} itemName={item.name} />
                 </div>
               </li>
             ))}

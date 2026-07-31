@@ -316,3 +316,183 @@ test("PDF reconciliation: consumes the placeholder for the first order number, c
   await expect(page.getByText(`#113-AAA-${stamp}`)).toBeVisible();
   await expect(page.getByText(`#113-BBB-${stamp}`)).toBeVisible();
 });
+
+test("cleaner can remove their own still-open request, but loses that option once it's marked ordered", async ({
+  browser,
+}) => {
+  const stamp = `${Date.now()}-${test.info().project.name}`;
+  const adminName = `Admin ${stamp}`;
+  const cleanerName = `Cleaner ${stamp}`;
+  const propertyName = `Cancel Request Property ${stamp}`;
+  const itemA = `Trash bags ${stamp}`;
+  const itemB = `Batteries ${stamp}`;
+
+  const adminContext = await browser.newContext();
+  const adminPage = await adminContext.newPage();
+  await signUp(adminPage, adminName, `admin-${stamp}@example.com`);
+  await promoteToAdmin(adminName);
+  await adminPage.goto("/properties");
+  await adminPage.getByPlaceholder("Name").fill(propertyName);
+  await adminPage.getByPlaceholder("Address").fill("1 Cancel St");
+  await adminPage.getByRole("button", { name: "Add property" }).click();
+  await adminPage.getByText(propertyName, { exact: true }).click();
+  await adminPage.waitForURL(/\/properties\/[0-9a-f-]+$/);
+  const propertyUrl = adminPage.url();
+
+  const cleanerContext = await browser.newContext();
+  const cleanerPage = await cleanerContext.newPage();
+  await signUp(cleanerPage, cleanerName, `cleaner-${stamp}@example.com`);
+
+  await adminPage.reload();
+  await adminPage.getByLabel("Assign cleaner").selectOption({ label: cleanerName });
+  await adminPage.getByRole("button", { name: "Assign" }).click();
+  await expect(adminPage.getByText(cleanerName)).toBeVisible();
+
+  await cleanerPage.goto(propertyUrl);
+  await cleanerPage.getByLabel("Item name").fill(itemA);
+  await cleanerPage.getByLabel("Item name").press("Enter");
+  await cleanerPage.getByRole("button", { name: "Submit request" }).click();
+  await expect(cleanerPage.getByText(itemA, { exact: true })).toBeVisible();
+
+  // Removes it themselves (their own, still open) - the native confirm()
+  // dialog needs an explicit accept, Playwright dismisses by default.
+  cleanerPage.once("dialog", (dialog) => dialog.accept());
+  await cleanerPage
+    .locator("li", { hasText: itemA })
+    .getByRole("button", { name: "Remove" })
+    .click();
+  await expect(cleanerPage.getByText(itemA, { exact: true })).not.toBeVisible();
+
+  // Second item: once an admin marks it ordered, it's no longer just a
+  // draft mistake - the Remove option should disappear for the cleaner too.
+  await cleanerPage.goto(propertyUrl);
+  await cleanerPage.getByLabel("Item name").fill(itemB);
+  await cleanerPage.getByLabel("Item name").press("Enter");
+  await cleanerPage.getByRole("button", { name: "Submit request" }).click();
+  await expect(cleanerPage.getByText(itemB, { exact: true })).toBeVisible();
+
+  await adminPage.goto("/requests");
+  const batchCard = adminPage.locator("li", { has: adminPage.locator(`text=${propertyName}`) });
+  await batchCard.locator('select[name="retailer_id"]').selectOption({ label: "Amazon" });
+  await batchCard.getByRole("button", { name: "Mark as ordered" }).click();
+
+  await expect
+    .poll(async () => {
+      const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+      const { data } = await serviceClient
+        .from("supply_requests")
+        .select("ordered_order_id")
+        .eq("item_name", itemB)
+        .single();
+      return data?.ordered_order_id !== null;
+    })
+    .toBe(true);
+
+  await cleanerPage.goto(propertyUrl);
+  await expect(
+    cleanerPage.locator("li", { hasText: itemB }).getByRole("button", { name: "Remove" }),
+  ).not.toBeVisible();
+
+  // RLS is the real gate, not just the hidden button - a direct delete
+  // attempt against an already-ordered row must still fail.
+  const ANON_KEY =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0";
+  const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const { data: itemBRow } = await serviceClient
+    .from("supply_requests")
+    .select("id")
+    .eq("item_name", itemB)
+    .single();
+
+  const anonClient = createClient(SUPABASE_URL, ANON_KEY);
+  const { data: signInData } = await anonClient.auth.signInWithPassword({
+    email: `cleaner-${stamp}@example.com`,
+    password: "password123",
+  });
+  const cleanerDbClient = createClient(SUPABASE_URL, ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${signInData!.session!.access_token}` } },
+  });
+  await cleanerDbClient.from("supply_requests").delete().eq("id", itemBRow!.id);
+
+  const { data: stillThere } = await serviceClient
+    .from("supply_requests")
+    .select("id")
+    .eq("id", itemBRow!.id)
+    .maybeSingle();
+  expect(stillThere).not.toBeNull();
+});
+
+test("admin can remove an order item, but gets a friendly error for one already confirmed received", async ({
+  page,
+}) => {
+  const stamp = `${Date.now()}-${test.info().project.name}`;
+  const adminName = `Admin ${stamp}`;
+  const orderNumber = `ORD-DELETE-${stamp}`;
+
+  await signUp(page, adminName, `admin-${stamp}@example.com`);
+  await promoteToAdmin(adminName);
+
+  const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const { data: retailer } = await serviceClient.from("retailers").select("id").eq("name", "Amazon").single();
+  const { data: property } = await serviceClient
+    .from("properties")
+    .insert({ name: `Delete Item Property ${stamp}`, address: "1 Delete St" })
+    .select("id")
+    .single();
+
+  const { data: orderId } = await serviceClient.rpc("create_manual_order", {
+    p_retailer_id: retailer!.id,
+    p_property_id: property!.id,
+    p_order_number: orderNumber,
+    p_order_date: "2026-07-31",
+    p_total_amount: 30,
+    p_items: [
+      { name: `Mistaken item ${stamp}`, expected_quantity: 1, unit_price: "10.00" },
+      { name: `Confirmed item ${stamp}`, expected_quantity: 1, unit_price: "20.00" },
+    ],
+  });
+
+  const { data: items } = await serviceClient
+    .from("order_items")
+    .select("id, name")
+    .eq("order_id", orderId);
+  const mistakenItem = items!.find((i) => i.name.startsWith("Mistaken"))!;
+  const confirmedItem = items!.find((i) => i.name.startsWith("Confirmed"))!;
+
+  // Seed confirmed-received history for the second item directly - a real
+  // package_confirmation_items row referencing it, same shape M5's
+  // confirm_package_delivery RPC would produce.
+  const { data: pkg } = await serviceClient.from("packages").select("id").eq("order_id", orderId).single();
+  const { data: adminProfile } = await serviceClient.from("profiles").select("id").eq("name", adminName).single();
+  const { data: confirmation } = await serviceClient
+    .from("package_confirmations")
+    .insert({ package_id: pkg!.id, reported_by: adminProfile!.id, outcome: "all_correct" })
+    .select("id")
+    .single();
+  await serviceClient
+    .from("package_confirmation_items")
+    .insert({ package_confirmation_id: confirmation!.id, order_item_id: confirmedItem.id, actual_quantity: 1 });
+
+  await page.goto(`/orders/${orderId}`);
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page
+    .locator("li", { hasText: mistakenItem.name })
+    .getByRole("button", { name: "Remove" })
+    .click();
+  await expect(page.getByText(mistakenItem.name, { exact: true })).not.toBeVisible();
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page
+    .locator("li", { hasText: confirmedItem.name })
+    .getByRole("button", { name: "Remove" })
+    .click();
+  await expect(page.getByText(/already been confirmed as received/)).toBeVisible();
+  await expect(page.getByText(confirmedItem.name, { exact: true })).toBeVisible();
+
+  const { data: remainingItems } = await serviceClient
+    .from("order_items")
+    .select("id")
+    .eq("order_id", orderId);
+  expect(remainingItems).toHaveLength(1);
+});

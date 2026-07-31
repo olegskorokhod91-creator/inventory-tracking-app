@@ -117,6 +117,45 @@ export async function setItemRefunded(itemId: string, refunded: boolean) {
   }
 }
 
+export async function deleteOrderItem(
+  itemId: string,
+): Promise<{ success: boolean; error?: string }> {
+  const profile = await requireAdmin();
+
+  const supabase = await createClient();
+  const { data: item } = await supabase
+    .from("order_items")
+    .select("order_id, name, expected_quantity")
+    .eq("id", itemId)
+    .single();
+  if (!item) return { success: false, error: "Item not found." };
+
+  const { error } = await supabase.from("order_items").delete().eq("id", itemId);
+
+  if (error) {
+    // package_confirmation_items references order_items with no cascade,
+    // deliberately - a cleaner's confirmed-received history is never
+    // deleted. Refunded is the right tool once an item has real delivery
+    // history; removal is only for a mistake that never got that far.
+    if (error.code === "23503") {
+      return {
+        success: false,
+        error:
+          "This item has already been confirmed as received and can't be removed — use Refunded instead.",
+      };
+    }
+    console.error("deleteOrderItem failed:", error);
+    return { success: false, error: "Failed to remove item." };
+  }
+
+  await logAuditChanges(supabase, profile.id, "order_items", itemId, [
+    { field: "deleted", oldValue: `${item.name} x${item.expected_quantity}`, newValue: null },
+  ]);
+
+  revalidatePath(`/orders/${item.order_id}`);
+  return { success: true };
+}
+
 // requires_attention is excluded deliberately - that package status is
 // earned only through a cleaner's own confirmation-flow report (M5), not
 // something an admin sets by hand.

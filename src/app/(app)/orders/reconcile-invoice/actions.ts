@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/auth";
 import { extractPdfInvoice } from "@/lib/email-pipeline/extract";
@@ -17,11 +16,12 @@ export type CandidatePlaceholder = {
   batchItems: { id: string; item_name: string; quantity: number | null }[];
 };
 
-export type ExtractState =
-  | { status: "error"; error: string }
-  | { status: "duplicate"; existingOrderId: string; amazonOrderNumber: string }
+export type FileExtractResult =
+  | { status: "error"; filename: string; error: string }
+  | { status: "duplicate"; filename: string; existingOrderId: string; amazonOrderNumber: string }
   | {
       status: "extracted";
+      filename: string;
       pdfImportId: string | null;
       amazonOrderNumber: string | null;
       poNumber: string | null;
@@ -30,22 +30,49 @@ export type ExtractState =
       shipments: ShipmentDraft[];
       matchedPropertyId: string | null;
       candidates: CandidatePlaceholder[];
-    }
-  | undefined;
+    };
 
-// Phase 1: upload -> extract -> match. Nothing touches orders/packages/
-// order_items here - only a light audit row (pdf_invoice_imports), same as
-// csv_imports. The admin reviews and can still edit everything before
-// anything real is written, in confirmReconciliation below.
-export async function extractInvoice(
-  _prevState: ExtractState,
-  formData: FormData,
-): Promise<ExtractState> {
-  const profile = await requireAdmin();
+export type ExtractState = { files: FileExtractResult[] } | undefined;
 
-  const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) {
-    return { status: "error", error: "No file selected." };
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
+
+// PO number is an exact match key, but existing properties created before
+// this feature shipped never got one backfilled (po_number is a new,
+// separately-set column - it doesn't retroactively fill from an existing
+// property's address). Falling back to an exact address match covers those
+// without guessing - your own samples show the PO text literally is the
+// address in practice. Two separate parameterized queries, not a raw
+// `.or()` filter string, since the PO text comes from an AI extraction over
+// untrusted document content and shouldn't be interpolated into a filter
+// expression.
+async function matchProperty(
+  supabase: SupabaseServerClient,
+  poNumber: string | null,
+): Promise<string | null> {
+  if (!poNumber) return null;
+
+  const { data: byPoNumber } = await supabase
+    .from("properties")
+    .select("id")
+    .eq("po_number", poNumber)
+    .maybeSingle();
+  if (byPoNumber) return byPoNumber.id;
+
+  const { data: byAddress } = await supabase
+    .from("properties")
+    .select("id")
+    .eq("address", poNumber)
+    .maybeSingle();
+  return byAddress?.id ?? null;
+}
+
+async function processOneFile(
+  supabase: SupabaseServerClient,
+  adminId: string,
+  file: File,
+): Promise<FileExtractResult> {
+  if (file.size === 0) {
+    return { status: "error", filename: file.name, error: "Empty file." };
   }
 
   const buffer = await file.arrayBuffer();
@@ -55,11 +82,10 @@ export async function extractInvoice(
   if (!extraction.is_amazon_invoice) {
     return {
       status: "error",
+      filename: file.name,
       error: "This doesn't look like an Amazon \"Final Details\" invoice PDF.",
     };
   }
-
-  const supabase = await createClient();
 
   // Dedup: the same Amazon order number should never produce a second
   // order row, whether from a re-upload or from this order having already
@@ -73,27 +99,19 @@ export async function extractInvoice(
     if (existing) {
       return {
         status: "duplicate",
+        filename: file.name,
         existingOrderId: existing.id,
         amazonOrderNumber: extraction.amazon_order_number,
       };
     }
   }
 
-  // PO number is an exact match key against the property's own configured
-  // value - not a guess, and no fallback fuzzy matching if it doesn't hit.
-  let matchedPropertyId: string | null = null;
-  if (extraction.po_number) {
-    const { data: property } = await supabase
-      .from("properties")
-      .select("id")
-      .eq("po_number", extraction.po_number)
-      .maybeSingle();
-    matchedPropertyId = property?.id ?? null;
-  }
+  const matchedPropertyId = await matchProperty(supabase, extraction.po_number);
 
   // PO number is property-level, not batch-level, so more than one pending
   // placeholder can legitimately exist for the same property (e.g. two
-  // separate "mark ordered" passes done at different times). All are
+  // separate "mark ordered" passes done at different times, or several
+  // files in this same upload resolving to the same property). All are
   // surfaced as candidates - the admin picks, nothing is auto-selected.
   const candidates: CandidatePlaceholder[] = [];
   if (matchedPropertyId) {
@@ -122,7 +140,7 @@ export async function extractInvoice(
   const { data: pdfImport } = await supabase
     .from("pdf_invoice_imports")
     .insert({
-      uploaded_by: profile.id,
+      uploaded_by: adminId,
       filename: file.name,
       amazon_order_number: extraction.amazon_order_number,
       po_number: extraction.po_number,
@@ -133,6 +151,7 @@ export async function extractInvoice(
 
   return {
     status: "extracted",
+    filename: file.name,
     pdfImportId: pdfImport?.id ?? null,
     amazonOrderNumber: extraction.amazon_order_number,
     poNumber: extraction.po_number,
@@ -151,12 +170,40 @@ export async function extractInvoice(
   };
 }
 
-export type ConfirmState = { success: false; error: string } | undefined;
+// Phase 1: upload -> extract -> match, independently per file. Nothing
+// touches orders/packages/order_items here - only a light audit row
+// (pdf_invoice_imports) per file, same as csv_imports. The admin reviews
+// and can still edit everything before anything real is written, in
+// confirmReconciliation below.
+export async function extractInvoices(
+  _prevState: ExtractState,
+  formData: FormData,
+): Promise<ExtractState> {
+  const profile = await requireAdmin();
+
+  const files = formData.getAll("files").filter((f): f is File => f instanceof File);
+  if (files.length === 0) {
+    return { files: [{ status: "error", filename: "", error: "No file selected." }] };
+  }
+
+  const supabase = await createClient();
+  const results: FileExtractResult[] = [];
+  for (const file of files) {
+    results.push(await processOneFile(supabase, profile.id, file));
+  }
+
+  return { files: results };
+}
+
+export type ConfirmState = { success: true; orderId: string } | { success: false; error: string } | undefined;
 
 // Phase 2: the explicit, reviewed save. Only point in the app where an
 // admin can edit an order's item list after creation - scoped to exactly
 // this step, per the product rule everywhere else in this app that items
-// are otherwise immutable once created.
+// are otherwise immutable once created. Returns a result instead of
+// redirecting - with multiple independent review cards on one page from a
+// multi-file upload, redirecting away on the first save would strand the
+// rest.
 export async function confirmReconciliation(
   _prevState: ConfirmState,
   formData: FormData,
@@ -235,5 +282,5 @@ export async function confirmReconciliation(
 
   revalidatePath("/orders");
   revalidatePath("/requests");
-  redirect(`/orders/${orderId}`);
+  return { success: true, orderId };
 }

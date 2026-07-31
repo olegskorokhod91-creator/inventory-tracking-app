@@ -3,9 +3,10 @@
 import { useActionState, useState } from "react";
 import Link from "next/link";
 import {
-  extractInvoice,
+  extractInvoices,
   confirmReconciliation,
   type ExtractState,
+  type FileExtractResult,
   type ShipmentDraft,
 } from "./actions";
 import { SubmitButton } from "@/components/SubmitButton";
@@ -27,38 +28,60 @@ function itemLooksRequested(
 }
 
 export function ReconcileForm({ properties }: { properties: Property[] }) {
-  const [extractState, extractAction] = useActionState(extractInvoice, undefined);
+  // Bumping this key forces a full remount of ReconcileFlow below, which
+  // resets its useActionState back to undefined - the "start over" escape
+  // hatch for when a PDF was misread and nothing here is salvageable.
+  const [resetKey, setResetKey] = useState(0);
+  return (
+    <ReconcileFlow
+      key={resetKey}
+      properties={properties}
+      onStartOver={() => setResetKey((k) => k + 1)}
+    />
+  );
+}
+
+function ReconcileFlow({
+  properties,
+  onStartOver,
+}: {
+  properties: Property[];
+  onStartOver: () => void;
+}) {
+  const [extractState, extractAction] = useActionState(extractInvoices, undefined);
+  // Tracks placeholder order ids consumed by a successful save *within this
+  // same multi-file batch* - two files can independently match the same
+  // single pending placeholder (PO number is property-level, not per-file),
+  // so once one card consumes it, the others need to stop offering it.
+  const [consumedOrderIds, setConsumedOrderIds] = useState<Set<string>>(new Set());
 
   if (!extractState) {
     return <UploadForm action={extractAction} />;
   }
 
-  if (extractState.status === "error") {
-    return (
-      <div className="flex flex-col gap-4">
-        <p className="text-sm text-red-600" role="alert">
-          {extractState.error}
-        </p>
-        <UploadForm action={extractAction} />
-      </div>
-    );
-  }
+  return (
+    <div className="flex flex-col gap-6">
+      <button
+        type="button"
+        onClick={onStartOver}
+        className="h-11 self-start rounded-md border border-black/15 px-4 text-sm font-medium dark:border-white/20"
+      >
+        Upload different invoice(s)
+      </button>
 
-  if (extractState.status === "duplicate") {
-    return (
-      <div className="flex flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950">
-        <p>
-          Order #{extractState.amazonOrderNumber} already exists in the
-          system — nothing was created.
-        </p>
-        <Link href={`/orders/${extractState.existingOrderId}`} className="underline">
-          View existing order →
-        </Link>
-      </div>
-    );
-  }
-
-  return <ReviewForm extracted={extractState} properties={properties} />;
+      {extractState.files.map((file, index) => (
+        <FileReviewCard
+          key={index}
+          file={file}
+          properties={properties}
+          consumedOrderIds={consumedOrderIds}
+          onSaved={(orderId) =>
+            setConsumedOrderIds((prev) => new Set(prev).add(orderId))
+          }
+        />
+      ))}
+    </div>
+  );
 }
 
 function UploadForm({ action }: { action: (formData: FormData) => void }) {
@@ -68,17 +91,22 @@ function UploadForm({ action }: { action: (formData: FormData) => void }) {
       className="flex flex-col gap-4 rounded-lg border border-black/10 p-4 dark:border-white/10"
     >
       <label className="flex flex-col gap-1 text-sm font-medium">
-        Amazon &quot;Final Details&quot; invoice PDF
+        Amazon &quot;Final Details&quot; invoice PDF(s)
         <input
           type="file"
-          name="file"
+          name="files"
           accept=".pdf"
+          multiple
           required
           className="h-11 rounded-md border border-black/15 px-3 py-2 text-base font-normal dark:border-white/20"
         />
       </label>
+      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+        Select more than one at once when the same purchase was split into
+        several Amazon order numbers - each is reviewed independently below.
+      </p>
       <SubmitButton
-        pendingText="Reading invoice…"
+        pendingText="Reading invoice(s)…"
         className="h-11 rounded-md bg-black text-base font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black"
       >
         Upload
@@ -87,12 +115,81 @@ function UploadForm({ action }: { action: (formData: FormData) => void }) {
   );
 }
 
+function FileReviewCard({
+  file,
+  properties,
+  consumedOrderIds,
+  onSaved,
+}: {
+  file: FileExtractResult;
+  properties: Property[];
+  consumedOrderIds: Set<string>;
+  onSaved: (orderId: string) => void;
+}) {
+  const [discarded, setDiscarded] = useState(false);
+
+  if (discarded) {
+    return (
+      <p className="rounded-md border border-black/10 p-3 text-sm text-zinc-500 dark:border-white/10">
+        Discarded — {file.filename || "(unnamed file)"}
+      </p>
+    );
+  }
+
+  if (file.status === "error") {
+    return (
+      <div className="flex flex-col gap-2 rounded-md border border-red-300 bg-red-50 p-4 text-sm dark:border-red-800 dark:bg-red-950">
+        <p className="font-medium">{file.filename}</p>
+        <p role="alert">{file.error}</p>
+        <button
+          type="button"
+          onClick={() => setDiscarded(true)}
+          className="self-start text-sm font-medium underline"
+        >
+          Dismiss
+        </button>
+      </div>
+    );
+  }
+
+  if (file.status === "duplicate") {
+    return (
+      <div className="flex flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950">
+        <p className="font-medium">{file.filename}</p>
+        <p>
+          Order #{file.amazonOrderNumber} already exists in the system —
+          nothing was created.
+        </p>
+        <Link href={`/orders/${file.existingOrderId}`} className="underline">
+          View existing order →
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <ReviewForm
+      extracted={file}
+      properties={properties}
+      consumedOrderIds={consumedOrderIds}
+      onSaved={onSaved}
+      onDiscard={() => setDiscarded(true)}
+    />
+  );
+}
+
 function ReviewForm({
   extracted,
   properties,
+  consumedOrderIds,
+  onSaved,
+  onDiscard,
 }: {
-  extracted: Extract<ExtractState, { status: "extracted" }>;
+  extracted: Extract<FileExtractResult, { status: "extracted" }>;
   properties: Property[];
+  consumedOrderIds: Set<string>;
+  onSaved: (orderId: string) => void;
+  onDiscard: () => void;
 }) {
   const [confirmState, confirmAction] = useActionState(confirmReconciliation, undefined);
 
@@ -105,9 +202,29 @@ function ReviewForm({
     new Set(),
   );
 
-  const selectedCandidate = extracted.candidates.find(
-    (c) => c.orderId === selectedCandidateId,
+  // If another card in this same upload already consumed the placeholder
+  // this card had selected (or auto-selected), fall back to "standalone" -
+  // never let two cards silently point at and overwrite the same order.
+  const effectiveCandidateId = consumedOrderIds.has(selectedCandidateId)
+    ? ""
+    : selectedCandidateId;
+  const availableCandidates = extracted.candidates.filter(
+    (c) => !consumedOrderIds.has(c.orderId) || c.orderId === effectiveCandidateId,
   );
+  const selectedCandidate = availableCandidates.find(
+    (c) => c.orderId === effectiveCandidateId,
+  );
+
+  if (confirmState?.success) {
+    return (
+      <div className="flex flex-col gap-2 rounded-md border border-green-300 bg-green-50 p-4 text-sm dark:border-green-800 dark:bg-green-950">
+        <p className="font-medium">{extracted.filename} saved.</p>
+        <Link href={`/orders/${confirmState.orderId}`} className="underline">
+          View order →
+        </Link>
+      </div>
+    );
+  }
 
   function selectCandidate(orderId: string) {
     setSelectedCandidateId(orderId);
@@ -165,14 +282,27 @@ function ReviewForm({
   return (
     <form
       action={confirmAction}
+      onSubmit={() => {
+        // Optimistically mark the placeholder consumed the moment this
+        // card submits, not after the round trip - a second card's render
+        // in between shouldn't get a window to also offer it.
+        if (effectiveCandidateId) onSaved(effectiveCandidateId);
+      }}
       className="flex flex-col gap-4 rounded-lg border border-black/10 p-4 dark:border-white/10"
     >
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium">{extracted.filename}</p>
+        <button
+          type="button"
+          onClick={onDiscard}
+          className="text-sm font-medium text-red-600 underline"
+        >
+          Discard
+        </button>
+      </div>
+
       <input type="hidden" name="pdf_import_id" value={extracted.pdfImportId ?? ""} />
-      <input
-        type="hidden"
-        name="existing_order_id"
-        value={selectedCandidate?.orderId ?? ""}
-      />
+      <input type="hidden" name="existing_order_id" value={selectedCandidate?.orderId ?? ""} />
       <input
         type="hidden"
         name="request_batch_id"
@@ -216,7 +346,7 @@ function ReviewForm({
         </select>
       </label>
 
-      {extracted.candidates.length > 0 && (
+      {availableCandidates.length > 0 && (
         <fieldset className="flex flex-col gap-2 rounded-md border border-black/10 p-3 dark:border-white/10">
           <legend className="text-sm font-medium">
             Which pending request does this belong to?
@@ -225,17 +355,17 @@ function ReviewForm({
             <input
               type="radio"
               name="candidate_picker"
-              checked={selectedCandidateId === ""}
+              checked={effectiveCandidateId === ""}
               onChange={() => selectCandidate("")}
             />
             None — standalone order, not linked to a request
           </label>
-          {extracted.candidates.map((c) => (
+          {availableCandidates.map((c) => (
             <label key={c.orderId} className="flex items-center gap-2 text-sm">
               <input
                 type="radio"
                 name="candidate_picker"
-                checked={selectedCandidateId === c.orderId}
+                checked={effectiveCandidateId === c.orderId}
                 onChange={() => selectCandidate(c.orderId)}
               />
               Pending order from {c.batchItems.length} requested item
@@ -380,7 +510,7 @@ function ReviewForm({
         ))}
       </fieldset>
 
-      {confirmState?.error && (
+      {confirmState && !confirmState.success && (
         <p className="text-sm text-red-600" role="alert">
           {confirmState.error}
         </p>

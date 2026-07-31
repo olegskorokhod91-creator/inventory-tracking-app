@@ -3,6 +3,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { assignCleaner, unassignCleaner, updateProperty } from "../actions";
 import { SupplyRequestForm } from "./SupplyRequestForm";
+import { CancelRequestButton } from "./CancelRequestButton";
 import { SubmitButton } from "@/components/SubmitButton";
 import { AddressAndPoFields } from "../AddressAndPoFields";
 
@@ -38,7 +39,9 @@ export default async function PropertyDetailPage({
 
   const { data: requests } = await supabase
     .from("supply_requests")
-    .select("id, item_name, quantity, note, created_at, ordered_order_id, resolved_by_order_id")
+    .select(
+      "id, item_name, quantity, note, created_at, created_by, ordered_order_id, resolved_by_order_id",
+    )
     .eq("property_id", id)
     .order("created_at", { ascending: false });
 
@@ -222,17 +225,26 @@ export default async function PropertyDetailPage({
                     </p>
                   )}
                 </div>
-                <span
-                  className={
-                    r.resolved_by_order_id
-                      ? "rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300"
-                      : r.ordered_order_id
-                        ? "rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-300"
-                        : "rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-400"
-                  }
-                >
-                  {r.resolved_by_order_id ? "Resolved" : r.ordered_order_id ? "Ordered" : "Open"}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={
+                      r.resolved_by_order_id
+                        ? "rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300"
+                        : r.ordered_order_id
+                          ? "rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-300"
+                          : "rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-400"
+                    }
+                  >
+                    {r.resolved_by_order_id ? "Resolved" : r.ordered_order_id ? "Ordered" : "Open"}
+                  </span>
+                  {!r.resolved_by_order_id && !r.ordered_order_id && r.created_by === profile?.id && (
+                    <CancelRequestButton
+                      requestId={r.id}
+                      propertyId={id}
+                      itemName={r.item_name}
+                    />
+                  )}
+                </div>
               </li>
             ))}
           </ul>
