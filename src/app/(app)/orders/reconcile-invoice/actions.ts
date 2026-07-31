@@ -36,34 +36,72 @@ export type ExtractState = { files: FileExtractResult[] } | undefined;
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 
-// PO number is an exact match key, but existing properties created before
-// this feature shipped never got one backfilled (po_number is a new,
-// separately-set column - it doesn't retroactively fill from an existing
-// property's address). Falling back to an exact address match covers those
-// without guessing - your own samples show the PO text literally is the
-// address in practice. Two separate parameterized queries, not a raw
-// `.or()` filter string, since the PO text comes from an AI extraction over
-// untrusted document content and shouldn't be interpolated into a filter
-// expression.
+// Amazon's PO field only ever holds the street address (number + street
+// name) - never city/state/zip - so matching against a property's full
+// mailing address, or against a po_number that was auto-filled from one,
+// needs the same reduction first. Also normalizes common street-suffix
+// abbreviations ("Lane" vs "Ln") so the same real address matches
+// regardless of which form got typed where - confirmed against a real
+// mismatch (property stored as "102 Cottage Ln, Michigan City, IN 46360",
+// invoice PO printed as "102 Cottage Lane").
+const STREET_SUFFIXES: Record<string, string> = {
+  street: "st", st: "st",
+  avenue: "ave", ave: "ave",
+  boulevard: "blvd", blvd: "blvd",
+  drive: "dr", dr: "dr",
+  lane: "ln", ln: "ln",
+  road: "rd", rd: "rd",
+  court: "ct", ct: "ct",
+  place: "pl", pl: "pl",
+  circle: "cir", cir: "cir",
+  terrace: "ter", ter: "ter",
+  parkway: "pkwy", pkwy: "pkwy",
+  highway: "hwy", hwy: "hwy",
+  way: "way",
+};
+
+function normalizeStreetAddress(input: string): string {
+  // Street portion only - everything before the first comma. A full
+  // mailing address is "street, city, state zip"; the PO field itself
+  // never has a comma, so this is a no-op there.
+  const streetPart = input.split(",")[0];
+  return streetPart
+    .toLowerCase()
+    .replace(/[.,]/g, "")
+    .trim()
+    .split(/\s+/)
+    .map((word) => STREET_SUFFIXES[word] ?? word)
+    .join(" ");
+}
+
+// Street number + name is treated as a unique key across the portfolio
+// (confirmed: street names repeat, numbers never do) - but if a
+// normalization ever produces more than one candidate anyway, that's
+// exactly the kind of ambiguity this app never guesses through elsewhere,
+// so it falls back to null (manual selection) rather than picking one.
 async function matchProperty(
   supabase: SupabaseServerClient,
   poNumber: string | null,
 ): Promise<string | null> {
   if (!poNumber) return null;
+  const normalizedPo = normalizeStreetAddress(poNumber);
+  if (!normalizedPo) return null;
 
-  const { data: byPoNumber } = await supabase
+  const { data: properties } = await supabase
     .from("properties")
-    .select("id")
-    .eq("po_number", poNumber)
-    .maybeSingle();
-  if (byPoNumber) return byPoNumber.id;
+    .select("id, address, po_number");
+  if (!properties) return null;
 
-  const { data: byAddress } = await supabase
-    .from("properties")
-    .select("id")
-    .eq("address", poNumber)
-    .maybeSingle();
-  return byAddress?.id ?? null;
+  const byPoNumber = properties.filter(
+    (p) => p.po_number && normalizeStreetAddress(p.po_number) === normalizedPo,
+  );
+  if (byPoNumber.length === 1) return byPoNumber[0].id;
+  if (byPoNumber.length > 1) return null;
+
+  const byAddress = properties.filter(
+    (p) => normalizeStreetAddress(p.address) === normalizedPo,
+  );
+  return byAddress.length === 1 ? byAddress[0].id : null;
 }
 
 async function processOneFile(
