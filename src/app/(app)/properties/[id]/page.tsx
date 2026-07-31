@@ -237,7 +237,8 @@ export default async function PropertyDetailPage({
                   >
                     {r.resolved_by_order_id ? "Resolved" : r.ordered_order_id ? "Ordered" : "Open"}
                   </span>
-                  {!r.resolved_by_order_id && !r.ordered_order_id && r.created_by === profile?.id && (
+                  {!r.resolved_by_order_id &&
+                    (isAdmin || (!r.ordered_order_id && r.created_by === profile?.id)) && (
                     <CancelRequestButton
                       requestId={r.id}
                       propertyId={id}

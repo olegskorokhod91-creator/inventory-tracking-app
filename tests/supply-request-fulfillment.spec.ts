@@ -496,3 +496,78 @@ test("admin can remove an order item, but gets a friendly error for one already 
     .eq("order_id", orderId);
   expect(remainingItems).toHaveLength(1);
 });
+
+test("admin can remove an Open or Ordered request, but not a Resolved one", async ({ page }) => {
+  const stamp = `${Date.now()}-${test.info().project.name}`;
+  const adminName = `Admin ${stamp}`;
+  const propertyName = `Admin Remove Property ${stamp}`;
+  const openItem = `Open Item ${stamp}`;
+  const orderedItem = `Ordered Item ${stamp}`;
+  const resolvedItem = `Resolved Item ${stamp}`;
+
+  await signUp(page, adminName, `admin-${stamp}@example.com`);
+  await promoteToAdmin(adminName);
+
+  const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const { data: retailer } = await serviceClient.from("retailers").select("id").eq("name", "Amazon").single();
+  const { data: property } = await serviceClient
+    .from("properties")
+    .insert({ name: propertyName, address: "1 Admin Remove St" })
+    .select("id")
+    .single();
+  const { data: adminProfile } = await serviceClient.from("profiles").select("id").eq("name", adminName).single();
+
+  const { data: batch } = await serviceClient
+    .from("supply_request_batches")
+    .insert({ property_id: property!.id, created_by: adminProfile!.id })
+    .select("id")
+    .single();
+  await serviceClient.from("supply_requests").insert([
+    { batch_id: batch!.id, property_id: property!.id, created_by: adminProfile!.id, item_name: openItem },
+    { batch_id: batch!.id, property_id: property!.id, created_by: adminProfile!.id, item_name: orderedItem },
+    { batch_id: batch!.id, property_id: property!.id, created_by: adminProfile!.id, item_name: resolvedItem },
+  ]);
+
+  const { data: orderedRow } = await serviceClient
+    .from("supply_requests")
+    .select("id")
+    .eq("item_name", orderedItem)
+    .single();
+  const { data: resolvedRow } = await serviceClient
+    .from("supply_requests")
+    .select("id")
+    .eq("item_name", resolvedItem)
+    .single();
+
+  const { data: placeholderOrderId } = await serviceClient.rpc("mark_supply_requests_ordered", {
+    p_batch_id: batch!.id,
+    p_request_ids: [orderedRow!.id],
+    p_retailer_id: retailer!.id,
+  });
+  await serviceClient
+    .from("supply_requests")
+    .update({ resolved_by_order_id: placeholderOrderId, resolved_at: new Date().toISOString() })
+    .eq("id", resolvedRow!.id);
+
+  await page.goto(`/properties/${property!.id}`);
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("li", { hasText: openItem }).getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByText(openItem, { exact: true })).not.toBeVisible();
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("li", { hasText: orderedItem }).getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByText(orderedItem, { exact: true })).not.toBeVisible();
+
+  // Resolved is tied to a real reconciled order - no Remove option at all,
+  // for admin or cleaner.
+  await expect(
+    page.locator("li", { hasText: resolvedItem }).getByRole("button", { name: "Remove" }),
+  ).not.toBeVisible();
+
+  const { data: remaining } = await serviceClient
+    .from("supply_requests")
+    .select("item_name")
+    .eq("batch_id", batch!.id);
+  expect(remaining!.map((r) => r.item_name)).toEqual([resolvedItem]);
+});

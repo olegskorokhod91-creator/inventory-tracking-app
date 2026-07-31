@@ -19,7 +19,7 @@ export function CancelRequestButton({
       type="button"
       disabled={isPending}
       onClick={() => {
-        if (!window.confirm(`Remove your request for "${itemName}"?`)) return;
+        if (!window.confirm(`Remove the request for "${itemName}"?`)) return;
         startTransition(async () => {
           await cancelSupplyRequest(requestId, propertyId);
         });
