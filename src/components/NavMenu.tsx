@@ -23,7 +23,13 @@ const ADMIN_ONLY_LINKS = [
 // awkwardly once admins had up to 9 links. A single dropdown scales to any
 // number of links without a layout fight, and matches the pattern most
 // mobile-first apps use for a nav with more than 3-4 items.
-export function NavMenu({ isAdmin }: { isAdmin: boolean }) {
+export function NavMenu({
+  isAdmin,
+  openRequestBatchCount = 0,
+}: {
+  isAdmin: boolean;
+  openRequestBatchCount?: number;
+}) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
@@ -91,9 +97,14 @@ export function NavMenu({ isAdmin }: { isAdmin: boolean }) {
             <Link
               key={link.href}
               href={link.href}
-              className="px-4 py-2.5 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              className="flex items-center justify-between px-4 py-2.5 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800"
             >
               {link.label}
+              {link.href === "/requests" && openRequestBatchCount > 0 && (
+                <span className="rounded-full bg-red-600 px-2 py-0.5 text-xs font-semibold text-white">
+                  {openRequestBatchCount}
+                </span>
+              )}
             </Link>
           ))}
         </nav>

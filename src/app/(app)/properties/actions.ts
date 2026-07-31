@@ -11,8 +11,14 @@ export async function createProperty(formData: FormData) {
   const address = String(formData.get("address") ?? "").trim();
   if (!name || !address) return;
 
+  // Pre-filled from the address on the client (see PropertyForm) since
+  // that's literally what gets typed into Amazon's PO field in practice -
+  // but stored as its own editable column, not derived, since addresses
+  // sometimes have formatting Amazon's PO field doesn't take cleanly.
+  const poNumber = String(formData.get("po_number") ?? "").trim();
+
   const supabase = await createClient();
-  await supabase.from("properties").insert({ name, address });
+  await supabase.from("properties").insert({ name, address, po_number: poNumber || null });
   revalidatePath("/properties");
 }
 
@@ -24,12 +30,20 @@ export async function updateProperty(propertyId: string, formData: FormData) {
   const status = String(formData.get("status") ?? "active");
   const notes = String(formData.get("notes") ?? "").trim();
   const ownerId = String(formData.get("owner_id") ?? "").trim();
+  const poNumber = String(formData.get("po_number") ?? "").trim();
   if (!name || !address) return;
 
   const supabase = await createClient();
   await supabase
     .from("properties")
-    .update({ name, address, status, notes: notes || null, owner_id: ownerId || null })
+    .update({
+      name,
+      address,
+      status,
+      notes: notes || null,
+      owner_id: ownerId || null,
+      po_number: poNumber || null,
+    })
     .eq("id", propertyId);
 
   revalidatePath(`/properties/${propertyId}`);
@@ -81,22 +95,25 @@ export async function createSupplyRequests(
     return { success: false };
   }
 
-  const rows = draftItems
+  const items = draftItems
     .map((item) => ({
-      property_id: propertyId,
-      created_by: profile.id,
       item_name: (item.item_name ?? "").trim(),
       quantity: item.quantity ? Number(item.quantity) : null,
       note: (item.note ?? "").trim() || null,
     }))
-    .filter((row) => row.item_name.length > 0);
+    .filter((item) => item.item_name.length > 0);
 
-  if (rows.length === 0) return { success: false };
+  if (items.length === 0) return { success: false };
 
-  // RLS ("Cleaners can create requests for assigned properties") is the
-  // actual gate here - this insert simply fails for anyone not assigned.
+  // create_supply_request_batch finds the property's already-open batch and
+  // appends to it, only creating a new one if none is open - RLS on both
+  // supply_request_batches and supply_requests (assigned-property checks)
+  // is the actual gate, this RPC runs as the caller (security invoker).
   const supabase = await createClient();
-  const { error } = await supabase.from("supply_requests").insert(rows);
+  const { error } = await supabase.rpc("create_supply_request_batch", {
+    p_property_id: propertyId,
+    p_items: items,
+  });
 
   revalidatePath(`/properties/${propertyId}`);
   return { success: !error };

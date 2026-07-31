@@ -6,7 +6,21 @@
 // cancelled/confirmed_received - those two are excluded from consideration
 // here for the same reason they're excluded from the active/completed
 // rollup itself.
-export function deriveActiveSubLabel(packages: { status: string }[]): string {
+export function deriveActiveSubLabel(
+  packages: { status: string }[],
+  order?: { source: string; order_number: string | null },
+): string {
+  // A request-fulfillment order with no order_number yet is a pending
+  // placeholder awaiting PDF reconciliation - its lone 'expected' package
+  // would otherwise read as "Awaiting shipment", which implies a real,
+  // confirmed order that just hasn't shipped. This is checked first and
+  // overrides everything else; once order_number is set, the order is no
+  // longer distinguishable from any other and falls through to the normal
+  // package-derived labels below.
+  if (order?.source === "request_fulfillment" && order.order_number === null) {
+    return "Ordered — Awaiting Confirmation";
+  }
+
   const unresolved = packages.filter(
     (p) => p.status !== "cancelled" && p.status !== "confirmed_received",
   );

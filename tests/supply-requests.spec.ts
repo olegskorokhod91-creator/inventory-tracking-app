@@ -113,8 +113,8 @@ test("cleaner submits a multi-item request, admin resolves one via order creatio
   await expect(adminPage.getByText(itemB, { exact: true })).toBeVisible();
 
   await adminPage.goto("/requests");
-  await expect(adminPage.getByText(`${itemA} x2`)).toBeVisible();
-  await expect(adminPage.getByText(itemB, { exact: true })).toBeVisible();
+  await expect(adminPage.locator("span", { hasText: `${itemA} x2` })).toBeVisible();
+  await expect(adminPage.locator("span", { hasText: itemB })).toBeVisible();
 
   // Admin creates an order, checks off only the first item.
   await adminPage.goto("/orders/new");
@@ -127,11 +127,14 @@ test("cleaner submits a multi-item request, admin resolves one via order creatio
   await adminPage.getByRole("button", { name: "Create order" }).click();
   await expect(adminPage).toHaveURL(/\/orders\/[0-9a-f-]+$/);
 
-  // First item is now resolved (gone from the open combined list); second
-  // item is untouched - no automatic matching.
+  // First item is now resolved; second is untouched - no automatic
+  // matching. The batch itself still shows on /requests (item B is still
+  // open), with item A now visible as "Resolved" rather than dropped -
+  // batches show full context, not just the still-open items.
   await adminPage.goto("/requests");
-  await expect(adminPage.getByText(itemB, { exact: true })).toBeVisible();
-  await expect(adminPage.getByText(`${itemA} x2`)).not.toBeVisible();
+  await expect(adminPage.locator("span", { hasText: itemB })).toBeVisible();
+  const itemARow = adminPage.locator("li", { hasText: `${itemA} x2` });
+  await expect(itemARow.getByText("Resolved")).toBeVisible();
 
   await adminPage.goto(propertyUrl);
   await expect(adminPage.getByText("Resolved")).toBeVisible();

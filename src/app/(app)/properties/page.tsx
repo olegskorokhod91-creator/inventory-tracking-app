@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { createProperty } from "./actions";
+import { AddressAndPoFields } from "./AddressAndPoFields";
 import { overdueCutoffIso, formatElapsed } from "@/lib/confirmation-reminders";
 import { SubmitButton } from "@/components/SubmitButton";
 
@@ -170,12 +171,7 @@ export default async function PropertiesPage() {
             required
             className="h-11 rounded-md border border-black/15 px-3 text-base dark:border-white/20"
           />
-          <input
-            name="address"
-            placeholder="Address"
-            required
-            className="h-11 rounded-md border border-black/15 px-3 text-base dark:border-white/20"
-          />
+          <AddressAndPoFields />
           <SubmitButton
             pendingText="Adding…"
             className="h-11 rounded-md bg-black text-base font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black"

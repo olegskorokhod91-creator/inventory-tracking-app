@@ -10,6 +10,7 @@ type OrderRow = {
   total_amount: number | null;
   computed_status: "active" | "completed";
   requires_attention: boolean;
+  source: string;
   retailers: { name: string } | null;
   properties: { name: string } | null;
   packages: { status: string }[];
@@ -39,7 +40,7 @@ export default async function OrdersPage() {
     supabase
       .from("orders_with_status")
       .select(
-        "id, order_number, order_date, total_amount, computed_status, requires_attention, retailers(name), properties(name), packages(status)",
+        "id, order_number, order_date, total_amount, computed_status, requires_attention, source, retailers(name), properties(name), packages(status)",
       )
       .not("property_id", "is", null)
       .order("order_date", { ascending: false })
@@ -48,9 +49,15 @@ export default async function OrdersPage() {
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-8">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-semibold">Orders</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/orders/reconcile-invoice"
+            className="h-11 shrink-0 rounded-md border border-black/15 px-4 text-base font-medium leading-[44px] dark:border-white/20"
+          >
+            Reconcile invoice
+          </Link>
           <Link
             href="/orders/import-csv"
             className="h-11 shrink-0 rounded-md border border-black/15 px-4 text-base font-medium leading-[44px] dark:border-white/20"
@@ -130,7 +137,10 @@ export default async function OrdersPage() {
                       </span>
                       {order.computed_status === "active" && (
                         <span className="rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-300">
-                          {deriveActiveSubLabel(order.packages)}
+                          {deriveActiveSubLabel(order.packages, {
+                            source: order.source,
+                            order_number: order.order_number,
+                          })}
                         </span>
                       )}
                       {order.requires_attention && (

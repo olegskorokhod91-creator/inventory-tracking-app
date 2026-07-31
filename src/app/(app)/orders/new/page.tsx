@@ -14,7 +14,12 @@ export default async function NewOrderPage() {
       supabase
         .from("supply_requests")
         .select("id, property_id, item_name, quantity, note")
-        .is("resolved_by_order_id", null),
+        // Excludes items already marked "ordered" via the batch-fulfillment
+        // flow (Requests screen) - those should only ever be resolved
+        // through PDF reconciliation from here on, not also resolvable a
+        // second, conflicting way through this older direct-order path.
+        .is("resolved_by_order_id", null)
+        .is("ordered_order_id", null),
     ]);
 
   return (

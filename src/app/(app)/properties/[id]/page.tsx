@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { assignCleaner, unassignCleaner, updateProperty } from "../actions";
 import { SupplyRequestForm } from "./SupplyRequestForm";
 import { SubmitButton } from "@/components/SubmitButton";
+import { AddressAndPoFields } from "../AddressAndPoFields";
 
 export default async function PropertyDetailPage({
   params,
@@ -21,7 +22,7 @@ export default async function PropertyDetailPage({
   // `notFound()` also doubles as the access-control boundary for them.
   const { data: property } = await supabase
     .from("properties")
-    .select("id, name, address, status, notes, owner_id")
+    .select("id, name, address, status, notes, owner_id, po_number")
     .eq("id", id)
     .single();
 
@@ -37,7 +38,7 @@ export default async function PropertyDetailPage({
 
   const { data: requests } = await supabase
     .from("supply_requests")
-    .select("id, item_name, quantity, note, created_at, resolved_by_order_id")
+    .select("id, item_name, quantity, note, created_at, ordered_order_id, resolved_by_order_id")
     .eq("property_id", id)
     .order("created_at", { ascending: false });
 
@@ -93,15 +94,10 @@ export default async function PropertyDetailPage({
                 className="h-11 rounded-md border border-black/15 px-3 text-base font-normal dark:border-white/20"
               />
             </label>
-            <label className="flex flex-col gap-1 text-sm font-medium">
-              Address
-              <input
-                name="address"
-                defaultValue={property.address}
-                required
-                className="h-11 rounded-md border border-black/15 px-3 text-base font-normal dark:border-white/20"
-              />
-            </label>
+            <AddressAndPoFields
+              initialAddress={property.address}
+              initialPoNumber={property.po_number ?? ""}
+            />
             <label className="flex flex-col gap-1 text-sm font-medium">
               Status
               <select
@@ -229,11 +225,13 @@ export default async function PropertyDetailPage({
                 <span
                   className={
                     r.resolved_by_order_id
-                      ? "rounded-full bg-zinc-200 px-2 py-1 text-xs font-medium dark:bg-zinc-800"
-                      : "rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-400"
+                      ? "rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300"
+                      : r.ordered_order_id
+                        ? "rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-300"
+                        : "rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-400"
                   }
                 >
-                  {r.resolved_by_order_id ? "Resolved" : "Open"}
+                  {r.resolved_by_order_id ? "Resolved" : r.ordered_order_id ? "Ordered" : "Open"}
                 </span>
               </li>
             ))}

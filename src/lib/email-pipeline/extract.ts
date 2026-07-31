@@ -158,3 +158,102 @@ export async function extractShippingUpdate(
     "extract_shipping_update",
   );
 }
+
+export type PdfInvoiceShipmentItem = {
+  name: string;
+  quantity: number;
+  unit_price: number | null;
+};
+
+export type PdfInvoiceShipment = {
+  shipped_date: string | null;
+  items: PdfInvoiceShipmentItem[];
+};
+
+export type PdfInvoiceExtraction = {
+  is_amazon_invoice: boolean;
+  amazon_order_number: string | null;
+  po_number: string | null;
+  order_placed_date: string | null;
+  order_total: number | null;
+  shipments: PdfInvoiceShipment[];
+};
+
+// Not an email pipeline input - a per-order Amazon "Final Details" PDF,
+// passed as a base64 document content block rather than plain text. Lives
+// alongside the email extractors above (same skill-as-system-prompt
+// pattern, same Anthropic client) rather than in a separate module, since
+// it's the same kind of call with a different content type.
+export async function extractPdfInvoice(
+  pdfBase64: string,
+): Promise<PdfInvoiceExtraction> {
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 2048,
+    system: readSkillPrompt("order-pdf-invoice-parsing"),
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "document",
+            source: {
+              type: "base64",
+              media_type: "application/pdf",
+              data: pdfBase64,
+            },
+          },
+        ],
+      },
+    ],
+    tools: [
+      {
+        name: "extract_pdf_invoice",
+        description: "Record the extracted Amazon invoice fields.",
+        input_schema: {
+          type: "object",
+          properties: {
+            is_amazon_invoice: { type: "boolean" },
+            amazon_order_number: { type: ["string", "null"] },
+            po_number: { type: ["string", "null"] },
+            order_placed_date: { type: ["string", "null"], description: "ISO YYYY-MM-DD" },
+            order_total: { type: ["number", "null"] },
+            shipments: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  shipped_date: { type: ["string", "null"], description: "ISO YYYY-MM-DD" },
+                  items: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        name: { type: "string" },
+                        quantity: { type: "number" },
+                        unit_price: { type: ["number", "null"] },
+                      },
+                      required: ["name", "quantity", "unit_price"],
+                    },
+                  },
+                },
+                required: ["shipped_date", "items"],
+              },
+            },
+          },
+          required: [
+            "is_amazon_invoice",
+            "amazon_order_number",
+            "po_number",
+            "order_placed_date",
+            "order_total",
+            "shipments",
+          ],
+        },
+      },
+    ],
+    tool_choice: { type: "tool", name: "extract_pdf_invoice" },
+  });
+
+  return extractToolInput<PdfInvoiceExtraction>(response, "extract_pdf_invoice");
+}
