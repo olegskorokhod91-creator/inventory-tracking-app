@@ -115,7 +115,13 @@ export async function createSupplyRequests(
     p_items: items,
   });
 
-  revalidatePath(`/properties/${propertyId}`);
+  // The nav badge (open batch count) lives in (app)/layout.tsx, a shared
+  // layout above this page - revalidating this path with type 'page' only
+  // busts that one page, not the layout. type 'layout', on a path that's
+  // actually inside the (app) route group, busts the shared layout itself
+  // ('/' resolves through a separate root src/app/page.tsx *outside* that
+  // group, so revalidating '/' never touches it at all).
+  revalidatePath(`/properties/${propertyId}`, "layout");
   return { success: !error };
 }
 
@@ -128,11 +134,31 @@ export async function cancelSupplyRequest(
   propertyId: string,
 ): Promise<{ success: boolean }> {
   const supabase = await createClient();
+  const { data: request } = await supabase
+    .from("supply_requests")
+    .select("batch_id")
+    .eq("id", requestId)
+    .single();
+
   const { error } = await supabase
     .from("supply_requests")
     .delete()
     .eq("id", requestId);
 
-  revalidatePath(`/properties/${propertyId}`);
+  // The batch-status trigger only fires when ordered_order_id *changes* -
+  // deleting a row outright never touches it, so an emptied batch would
+  // otherwise sit around forever still marked 'open'. Clean it up directly
+  // if this was its last remaining request.
+  if (!error && request?.batch_id) {
+    const { count } = await supabase
+      .from("supply_requests")
+      .select("id", { count: "exact", head: true })
+      .eq("batch_id", request.batch_id);
+    if ((count ?? 0) === 0) {
+      await supabase.from("supply_request_batches").delete().eq("id", request.batch_id);
+    }
+  }
+
+  revalidatePath(`/properties/${propertyId}`, "layout");
   return { success: !error };
 }

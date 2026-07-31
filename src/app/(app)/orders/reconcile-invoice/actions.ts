@@ -320,5 +320,11 @@ export async function confirmReconciliation(
 
   revalidatePath("/orders");
   revalidatePath("/requests");
+  // The nav badge (open batch count) lives in the shared (app)/layout.tsx.
+  // '/' resolves through a separate root page *outside* the (app) route
+  // group, so revalidating it never touches that layout - has to be a path
+  // actually inside the group, with type 'layout' to bust the layout
+  // itself rather than just this one page.
+  revalidatePath("/requests", "layout");
   return { success: true, orderId };
 }

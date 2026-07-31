@@ -571,3 +571,148 @@ test("admin can remove an Open or Ordered request, but not a Resolved one", asyn
     .eq("batch_id", batch!.id);
   expect(remaining!.map((r) => r.item_name)).toEqual([resolvedItem]);
 });
+
+test("nav badge reflects request removal without a manual reload", async ({ page }) => {
+  const stamp = `${Date.now()}-${test.info().project.name}`;
+  const adminName = `Admin ${stamp}`;
+  const propertyName = `Badge Property ${stamp}`;
+  const itemName = `Badge Item ${stamp}`;
+
+  await signUp(page, adminName, `admin-${stamp}@example.com`);
+  await promoteToAdmin(adminName);
+
+  const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const { data: property } = await serviceClient
+    .from("properties")
+    .insert({ name: propertyName, address: "1 Badge St" })
+    .select("id")
+    .single();
+  const { data: adminProfile } = await serviceClient.from("profiles").select("id").eq("name", adminName).single();
+  const { data: batch } = await serviceClient
+    .from("supply_request_batches")
+    .insert({ property_id: property!.id, created_by: adminProfile!.id })
+    .select("id")
+    .single();
+  await serviceClient
+    .from("supply_requests")
+    .insert({ batch_id: batch!.id, property_id: property!.id, created_by: adminProfile!.id, item_name: itemName });
+
+  // The badge counts *every* open batch system-wide, and this suite runs
+  // workers in parallel against one shared local DB - other tests' batches
+  // open and close throughout, so even a "before vs after" comparison can
+  // coincidentally collide. What actually matters, and what's robust to
+  // that noise, is that the badge stays consistent with the DB's current
+  // truth at the moment it's read - not that it changed from some earlier
+  // snapshot.
+  async function expectedBadgeText(): Promise<string | null> {
+    const { count } = await serviceClient
+      .from("supply_request_batches")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "open");
+    return count && count > 0 ? String(count) : null;
+  }
+
+  await page.goto(`/properties/${property!.id}`);
+  await page.getByLabel("Menu").click();
+  const requestsLink = page.getByRole("link", { name: /Requests/ });
+  await expect(requestsLink.locator("span")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("li", { hasText: itemName }).getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByText(itemName, { exact: true })).not.toBeVisible();
+
+  // No page.reload() here on purpose - this is exactly what the bug was:
+  // the badge is server-rendered in a shared layout, and only revalidating
+  // the current page's own path left it stale until a hard reload.
+  await page.getByLabel("Menu").click();
+  await expect(async () => {
+    const badgeAfter = await requestsLink.locator("span").textContent().catch(() => null);
+    expect(badgeAfter).toBe(await expectedBadgeText());
+  }).toPass();
+});
+
+test("deleting an order's last item deletes the order itself, but not one with confirmed package history", async ({
+  page,
+}) => {
+  const stamp = `${Date.now()}-${test.info().project.name}`;
+  const adminName = `Admin ${stamp}`;
+
+  await signUp(page, adminName, `admin-${stamp}@example.com`);
+  await promoteToAdmin(adminName);
+
+  const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const { data: retailer } = await serviceClient.from("retailers").select("id").eq("name", "Amazon").single();
+  const { data: adminProfile } = await serviceClient.from("profiles").select("id").eq("name", adminName).single();
+
+  // Case 1: a plain, never-confirmed order - deleting its one item should
+  // delete the order itself and redirect away.
+  const orderNumberA = `ORD-EMPTY-${stamp}`;
+  const { data: propertyA } = await serviceClient
+    .from("properties")
+    .insert({ name: `Empty Order Property ${stamp}`, address: "1 Empty St" })
+    .select("id")
+    .single();
+  const { data: orderIdA } = await serviceClient.rpc("create_manual_order", {
+    p_retailer_id: retailer!.id,
+    p_property_id: propertyA!.id,
+    p_order_number: orderNumberA,
+    p_order_date: "2026-07-31",
+    p_total_amount: 10,
+    p_items: [{ name: `Only item ${stamp}`, expected_quantity: 1, unit_price: "10.00" }],
+  });
+  const { data: itemsA } = await serviceClient.from("order_items").select("id, name").eq("order_id", orderIdA);
+
+  await page.goto(`/orders/${orderIdA}`);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("li", { hasText: itemsA![0].name }).getByRole("button", { name: "Remove" }).click();
+  await expect(page).toHaveURL("/orders");
+  await expect(page.getByText(orderNumberA)).not.toBeVisible();
+
+  const { data: orderAAfter } = await serviceClient.from("orders").select("id").eq("id", orderIdA).maybeSingle();
+  expect(orderAAfter).toBeNull();
+
+  // Case 2: a package was confirmed via M5's "no items itemized" degraded
+  // path - package_confirmations exists but references no specific item,
+  // so deleting the sole item isn't blocked by the per-item FK guard. The
+  // order-level check must still catch this and refuse to delete the order.
+  const orderNumberB = `ORD-CONFIRMED-${stamp}`;
+  const { data: propertyB } = await serviceClient
+    .from("properties")
+    .insert({ name: `Confirmed History Property ${stamp}`, address: "1 Confirmed St" })
+    .select("id")
+    .single();
+  const { data: orderIdB } = await serviceClient.rpc("create_manual_order", {
+    p_retailer_id: retailer!.id,
+    p_property_id: propertyB!.id,
+    p_order_number: orderNumberB,
+    p_order_date: "2026-07-31",
+    p_total_amount: 10,
+    p_items: [{ name: `Degraded item ${stamp}`, expected_quantity: 1, unit_price: "10.00" }],
+  });
+  const { data: itemsB } = await serviceClient.from("order_items").select("id, name").eq("order_id", orderIdB);
+  const { data: packageB } = await serviceClient.from("packages").select("id").eq("order_id", orderIdB).single();
+  await serviceClient
+    .from("package_confirmations")
+    .insert({ package_id: packageB!.id, reported_by: adminProfile!.id, outcome: "items_missing" });
+
+  await page.goto(`/orders/${orderIdB}`);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("li", { hasText: itemsB![0].name }).getByRole("button", { name: "Remove" }).click();
+  // Item itself has no direct confirmation-item link, so it deletes fine -
+  // but the order must survive since its package does have history.
+  await expect(page.getByText(itemsB![0].name, { exact: true })).not.toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/orders/${orderIdB}$`));
+
+  const { data: orderBAfter } = await serviceClient.from("orders").select("id").eq("id", orderIdB).maybeSingle();
+  expect(orderBAfter).not.toBeNull();
+
+  // The standalone Delete order button (for an already-empty order) must
+  // also refuse, with the same friendly reasoning.
+  await page.reload();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Delete order" }).click();
+  await expect(page.getByText(/confirmed delivery history/)).toBeVisible();
+  const { data: orderBStillThere } = await serviceClient.from("orders").select("id").eq("id", orderIdB).maybeSingle();
+  expect(orderBStillThere).not.toBeNull();
+});

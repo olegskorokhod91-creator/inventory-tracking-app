@@ -117,9 +117,52 @@ export async function setItemRefunded(itemId: string, refunded: boolean) {
   }
 }
 
+// True only if a real cleaner (or admin-manual) confirmation exists on any
+// of the order's packages - the one thing that must never be silently lost
+// by deleting the order. Checked before every order deletion below.
+async function orderHasConfirmationHistory(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orderId: string,
+): Promise<boolean> {
+  const { data: packages } = await supabase
+    .from("packages")
+    .select("id")
+    .eq("order_id", orderId);
+  const packageIds = (packages ?? []).map((p) => p.id);
+  if (packageIds.length === 0) return false;
+
+  const { count } = await supabase
+    .from("package_confirmations")
+    .select("id", { count: "exact", head: true })
+    .in("package_id", packageIds);
+  return (count ?? 0) > 0;
+}
+
+// packages/order_items cascade from orders automatically, but several
+// other tables reference orders with no cascade at all (imported_emails,
+// unmatched_updates, supply_requests, pdf_invoice_imports) - deleting an
+// order those still point to would otherwise fail outright on the FK. They're
+// all just audit/back-references, safe to null out; supply_requests
+// specifically reverts to Open (via the existing batch-status trigger) so
+// the underlying request can be re-ordered or re-reconciled properly,
+// rather than being left pointing at a row that no longer exists.
+async function detachOrderReferences(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orderId: string,
+) {
+  await supabase.from("supply_requests").update({ ordered_order_id: null }).eq("ordered_order_id", orderId);
+  await supabase
+    .from("supply_requests")
+    .update({ resolved_by_order_id: null, resolved_at: null })
+    .eq("resolved_by_order_id", orderId);
+  await supabase.from("pdf_invoice_imports").update({ resulting_order_id: null }).eq("resulting_order_id", orderId);
+  await supabase.from("imported_emails").update({ created_order_id: null }).eq("created_order_id", orderId);
+  await supabase.from("unmatched_updates").update({ resolved_order_id: null }).eq("resolved_order_id", orderId);
+}
+
 export async function deleteOrderItem(
   itemId: string,
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; orderDeleted?: boolean; orderId?: string }> {
   const profile = await requireAdmin();
 
   const supabase = await createClient();
@@ -152,7 +195,80 @@ export async function deleteOrderItem(
     { field: "deleted", oldValue: `${item.name} x${item.expected_quantity}`, newValue: null },
   ]);
 
+  // That was the order's last item if this comes back empty - the order is
+  // now an empty shell (still "active", nothing to show), so remove it too.
+  const { count: remainingCount } = await supabase
+    .from("order_items")
+    .select("id", { count: "exact", head: true })
+    .eq("order_id", item.order_id);
+
+  if ((remainingCount ?? 0) === 0 && !(await orderHasConfirmationHistory(supabase, item.order_id))) {
+    await detachOrderReferences(supabase, item.order_id);
+    const { error: deleteOrderErr } = await supabase.from("orders").delete().eq("id", item.order_id);
+    if (!deleteOrderErr) {
+      await logAuditChanges(supabase, profile.id, "orders", item.order_id, [
+        { field: "deleted", oldValue: "last item removed - order auto-deleted", newValue: null },
+      ]);
+      revalidatePath("/orders");
+      revalidatePath("/requests");
+      // Detaching a supply_requests row above can flip its batch back to
+      // Open, changing the nav badge - that badge lives in the shared
+      // (app)/layout.tsx, which '/' doesn't route through (a separate root
+      // page outside the (app) group handles it), so it needs a path
+      // actually inside the group with type 'layout' to bust the layout.
+      revalidatePath("/orders", "layout");
+      return { success: true, orderDeleted: true, orderId: item.order_id };
+    }
+    console.error("auto-delete of emptied order failed:", deleteOrderErr);
+  }
+
   revalidatePath(`/orders/${item.order_id}`);
+  return { success: true, orderId: item.order_id };
+}
+
+// Standalone cleanup for an order that's already an empty shell (e.g. from
+// before this auto-delete existed) - deliberately scoped to zero-item
+// orders only, not a general "delete any order" capability.
+export async function deleteOrder(orderId: string): Promise<{ success: boolean; error?: string }> {
+  const profile = await requireAdmin();
+
+  const supabase = await createClient();
+  const { data: order } = await supabase
+    .from("orders")
+    .select("order_number")
+    .eq("id", orderId)
+    .single();
+  if (!order) return { success: false, error: "Order not found." };
+
+  const { count: itemCount } = await supabase
+    .from("order_items")
+    .select("id", { count: "exact", head: true })
+    .eq("order_id", orderId);
+  if ((itemCount ?? 0) > 0) {
+    return { success: false, error: "This order still has items — remove them individually first." };
+  }
+
+  if (await orderHasConfirmationHistory(supabase, orderId)) {
+    return {
+      success: false,
+      error: "This order has confirmed delivery history on one of its packages and can't be deleted.",
+    };
+  }
+
+  await detachOrderReferences(supabase, orderId);
+  const { error } = await supabase.from("orders").delete().eq("id", orderId);
+  if (error) {
+    console.error("deleteOrder failed:", error);
+    return { success: false, error: "Failed to delete order." };
+  }
+
+  await logAuditChanges(supabase, profile.id, "orders", orderId, [
+    { field: "deleted", oldValue: order.order_number ?? "(no order number)", newValue: null },
+  ]);
+
+  revalidatePath("/orders");
+  revalidatePath("/requests");
+  revalidatePath("/orders", "layout");
   return { success: true };
 }
 

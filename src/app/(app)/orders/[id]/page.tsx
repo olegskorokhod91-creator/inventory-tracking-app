@@ -5,6 +5,7 @@ import { suggestPropertyMatch } from "@/lib/property-suggestion";
 import { updateOrder, updatePackage } from "../actions";
 import { RefundToggle } from "./RefundToggle";
 import { RemoveItemButton } from "./RemoveItemButton";
+import { DeleteOrderButton } from "./DeleteOrderButton";
 import { SubmitButton } from "@/components/SubmitButton";
 
 type PackageRow = {
@@ -255,9 +256,12 @@ export default async function OrderDetailPage({
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            No items yet — waiting on the CSV import or a manual update.
-          </p>
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              No items yet — waiting on the CSV import or a manual update.
+            </p>
+            <DeleteOrderButton orderId={order.id} />
+          </div>
         )}
       </section>
 

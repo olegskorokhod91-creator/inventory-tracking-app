@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { deleteOrderItem } from "../actions";
 
 export function RemoveItemButton({
@@ -12,6 +13,7 @@ export function RemoveItemButton({
 }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   return (
     <div className="flex flex-col items-end gap-1">
@@ -24,7 +26,14 @@ export function RemoveItemButton({
           }
           startTransition(async () => {
             const result = await deleteOrderItem(itemId);
-            setError(result.success ? null : (result.error ?? "Failed to remove item."));
+            if (!result.success) {
+              setError(result.error ?? "Failed to remove item.");
+              return;
+            }
+            setError(null);
+            // That was the last item - the order itself is gone too, so
+            // there's nothing left on this page to stay on.
+            if (result.orderDeleted) router.push("/orders");
           });
         }}
         className="text-sm font-medium text-red-600 underline disabled:opacity-40"
