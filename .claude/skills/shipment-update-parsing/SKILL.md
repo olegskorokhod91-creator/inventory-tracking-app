@@ -19,7 +19,13 @@ specific email actually states.
   fallback match key when no order number is present (e.g. a carrier-only
   notification that never mentions the retailer's order number at all).
 - `carrier` — the shipping carrier (UPS, FedEx, USPS, Amazon Logistics,
-  etc.) if identifiable.
+  etc.), **only if the email's text literally names one**. The sender
+  being "Amazon.com" is not that - a huge share of Amazon's own delivery
+  notifications never state a carrier at all, and "Amazon Logistics" is
+  not a safe default for those just because it's a plausible one. If no
+  carrier name appears anywhere in the email body, return `null` - don't
+  infer it from the sender, the domain, or what's typical for this kind
+  of order.
 - `status` — map to exactly one of: `shipped`, `out_for_delivery`,
   `delivered`, `delayed`, `cancelled`. If the email's language doesn't
   clearly map to one of these five, return `null` rather than guessing
