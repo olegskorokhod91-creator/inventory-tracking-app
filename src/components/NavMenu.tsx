@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 const CLEANER_LINKS = [
   { href: "/confirmations", label: "Confirmations" },
   { href: "/properties", label: "Properties" },
+  { href: "/my-orders", label: "Orders" },
 ];
 
 const ADMIN_ONLY_LINKS = [

@@ -105,13 +105,26 @@ export async function createSupplyRequests(
 
   if (items.length === 0) return { success: false };
 
-  // create_supply_request_batch finds the property's already-open batch and
-  // appends to it, only creating a new one if none is open - RLS on both
-  // supply_request_batches and supply_requests (assigned-property checks)
-  // is the actual gate, this RPC runs as the caller (security invoker).
+  // "Also add these to" other houses - fans the same item list out to
+  // several properties' own open batches in one call. Deduped in case the
+  // current property was somehow also checked in the list.
+  let extraPropertyIds: string[];
+  try {
+    extraPropertyIds = JSON.parse(String(formData.get("extra_property_ids") ?? "[]"));
+  } catch {
+    extraPropertyIds = [];
+  }
+  const propertyIds = [...new Set([propertyId, ...extraPropertyIds])];
+
+  // create_supply_request_batch finds each property's already-open batch
+  // and appends to it, only creating a new one if none is open - RLS on
+  // both supply_request_batches and supply_requests (assigned-property
+  // checks) is the actual gate, this RPC runs as the caller (security
+  // invoker), so a property she isn't assigned to fails the whole call
+  // rather than silently skipping it.
   const supabase = await createClient();
   const { error } = await supabase.rpc("create_supply_request_batch", {
-    p_property_id: propertyId,
+    p_property_ids: propertyIds,
     p_items: items,
   });
 
@@ -120,8 +133,11 @@ export async function createSupplyRequests(
   // busts that one page, not the layout. type 'layout', on a path that's
   // actually inside the (app) route group, busts the shared layout itself
   // ('/' resolves through a separate root src/app/page.tsx *outside* that
-  // group, so revalidating '/' never touches it at all).
-  revalidatePath(`/properties/${propertyId}`, "layout");
+  // group, so revalidating '/' never touches it at all). Every fanned-out
+  // property's own page needs the same treatment, not just the current one.
+  for (const id of propertyIds) {
+    revalidatePath(`/properties/${id}`, "layout");
+  }
   return { success: !error };
 }
 

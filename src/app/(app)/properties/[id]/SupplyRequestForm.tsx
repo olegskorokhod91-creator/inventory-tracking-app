@@ -5,12 +5,16 @@ import { createSupplyRequests, type SupplyRequestFormState } from "../actions";
 
 type DraftItem = { item_name: string; quantity: string; note: string };
 
+type OtherProperty = { id: string; name: string };
+
 export function SupplyRequestForm({
   propertyId,
   existingItemNames,
+  otherProperties = [],
 }: {
   propertyId: string;
   existingItemNames: string[];
+  otherProperties?: OtherProperty[];
 }) {
   const [state, formAction, pending] = useActionState(
     createSupplyRequests.bind(null, propertyId),
@@ -20,6 +24,7 @@ export function SupplyRequestForm({
   const [nameInput, setNameInput] = useState("");
   const [quantityInput, setQuantityInput] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [extraPropertyIds, setExtraPropertyIds] = useState<Set<string>>(new Set());
 
   const nameInputRef = useRef<HTMLInputElement>(null);
   const quantityInputRef = useRef<HTMLInputElement>(null);
@@ -36,7 +41,17 @@ export function SupplyRequestForm({
       setItems([]);
       setNameInput("");
       setQuantityInput("");
+      setExtraPropertyIds(new Set());
     }
+  }
+
+  function toggleExtraProperty(id: string) {
+    setExtraPropertyIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   const suggestions =
@@ -86,6 +101,11 @@ export function SupplyRequestForm({
       className="flex flex-col gap-4 rounded-lg border border-black/10 p-4 dark:border-white/10"
     >
       <input type="hidden" name="items" value={JSON.stringify(allItems)} />
+      <input
+        type="hidden"
+        name="extra_property_ids"
+        value={JSON.stringify([...extraPropertyIds])}
+      />
 
       <h2 className="text-lg font-medium">Request supplies</h2>
 
@@ -180,6 +200,40 @@ export function SupplyRequestForm({
             </li>
           ))}
         </ul>
+      )}
+
+      {otherProperties.length > 0 && (
+        <fieldset className="flex flex-col gap-2 rounded-md border border-black/10 p-3 dark:border-white/10">
+          <div className="flex items-center justify-between">
+            <legend className="text-sm font-medium">
+              Also request everything above for
+            </legend>
+            <button
+              type="button"
+              onClick={() =>
+                setExtraPropertyIds((prev) =>
+                  prev.size === otherProperties.length
+                    ? new Set()
+                    : new Set(otherProperties.map((p) => p.id)),
+                )
+              }
+              className="text-xs font-medium underline"
+            >
+              {extraPropertyIds.size === otherProperties.length ? "Clear all" : "Select all"}
+            </button>
+          </div>
+          {otherProperties.map((p) => (
+            <label key={p.id} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={extraPropertyIds.has(p.id)}
+                onChange={() => toggleExtraProperty(p.id)}
+                className="h-5 w-5"
+              />
+              {p.name}
+            </label>
+          ))}
+        </fieldset>
       )}
 
       <button

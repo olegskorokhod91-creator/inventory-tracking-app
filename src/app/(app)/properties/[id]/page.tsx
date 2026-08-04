@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { getCurrentProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { assignCleaner, unassignCleaner, updateProperty } from "../actions";
@@ -46,11 +47,27 @@ export default async function PropertyDetailPage({
     .order("created_at", { ascending: false });
 
   let itemNames: string[] = [];
+  let otherProperties: { id: string; name: string }[] = [];
   if (!isAdmin) {
     const { data: names } = await supabase.rpc(
       "get_supply_request_item_names",
     );
     itemNames = (names as string[] | null) ?? [];
+
+    // "Also request for" list - the cleaner's other assigned properties,
+    // same RLS-scoped assignment join used everywhere else. Never shows a
+    // property she isn't actually responsible for.
+    if (profile) {
+      const { data: assignments } = await supabase
+        .from("cleaner_property_assignments")
+        .select("properties(id, name)")
+        .eq("user_id", profile.id)
+        .neq("property_id", id)
+        .returns<{ properties: { id: string; name: string } | null }[]>();
+      otherProperties = (assignments ?? [])
+        .map((a) => a.properties)
+        .filter((p): p is { id: string; name: string } => p !== null);
+    }
   }
 
   let assignments:
@@ -226,17 +243,30 @@ export default async function PropertyDetailPage({
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <span
-                    className={
-                      r.resolved_by_order_id
-                        ? "rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300"
-                        : r.ordered_order_id
-                          ? "rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-300"
-                          : "rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-400"
-                    }
-                  >
-                    {r.resolved_by_order_id ? "Resolved" : r.ordered_order_id ? "Ordered" : "Open"}
-                  </span>
+                  {(() => {
+                    const chipClassName = r.resolved_by_order_id
+                      ? "rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-800 dark:bg-green-950 dark:text-green-300"
+                      : r.ordered_order_id
+                        ? "rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-300"
+                        : "rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-400";
+                    const chipLabel = r.resolved_by_order_id
+                      ? "Resolved"
+                      : r.ordered_order_id
+                        ? "Ordered"
+                        : "Open";
+                    const linkedOrderId = r.resolved_by_order_id ?? r.ordered_order_id;
+
+                    return linkedOrderId ? (
+                      <Link
+                        href={isAdmin ? `/orders/${linkedOrderId}` : `/my-orders/${linkedOrderId}`}
+                        className={`${chipClassName} underline`}
+                      >
+                        {chipLabel}
+                      </Link>
+                    ) : (
+                      <span className={chipClassName}>{chipLabel}</span>
+                    );
+                  })()}
                   {!r.resolved_by_order_id &&
                     (isAdmin || (!r.ordered_order_id && r.created_by === profile?.id)) && (
                     <CancelRequestButton
@@ -257,7 +287,11 @@ export default async function PropertyDetailPage({
       </section>
 
       {!isAdmin && (
-        <SupplyRequestForm propertyId={id} existingItemNames={itemNames} />
+        <SupplyRequestForm
+          propertyId={id}
+          existingItemNames={itemNames}
+          otherProperties={otherProperties}
+        />
       )}
     </div>
   );
