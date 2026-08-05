@@ -17,7 +17,7 @@ type BatchRow = {
   id: string;
   created_at: string;
   property_id: string;
-  properties: { name: string } | null;
+  properties: { name: string; address: string } | null;
   supply_requests: RequestItem[];
 };
 
@@ -57,7 +57,7 @@ export default async function RequestsPage() {
     supabase
       .from("supply_request_batches")
       .select(
-        "id, created_at, property_id, properties(name), supply_requests(id, item_name, quantity, note, ordered_order_id, resolved_by_order_id)",
+        "id, created_at, property_id, properties(name, address), supply_requests(id, item_name, quantity, note, ordered_order_id, resolved_by_order_id)",
       )
       .order("created_at", { ascending: true })
       .returns<BatchRow[]>(),
@@ -99,14 +99,21 @@ export default async function RequestsPage() {
                 key={batch.id}
                 className="flex flex-col gap-3 rounded-lg border border-black/10 p-4 dark:border-white/10"
               >
-                <div className="flex items-center justify-between">
-                  <Link
-                    href={`/properties/${batch.property_id}`}
-                    className="font-medium underline"
-                  >
-                    {batch.properties?.name}
-                  </Link>
-                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <Link
+                      href={`/properties/${batch.property_id}`}
+                      className="font-medium underline"
+                    >
+                      {batch.properties?.name}
+                    </Link>
+                    {batch.properties?.address && (
+                      <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                        {batch.properties.address}
+                      </p>
+                    )}
+                  </div>
+                  <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">
                     {new Date(batch.created_at).toLocaleDateString()}
                   </span>
                 </div>
