@@ -14,14 +14,21 @@ export default async function AppLayout({
   // Batch-count, not item-count - it answers "how many separate things do
   // I need to go act on," which stays small and meaningful now that a
   // property can only ever have one open batch at a time.
+  //
+  // Deliberately NOT `.eq("status", "open")` - that column can drift from
+  // what /requests actually shows (e.g. a batch shell created with zero
+  // items, or any other status/items mismatch), so this counts the same
+  // way the page itself does: a batch with at least one item still
+  // missing resolved_by_order_id. Single source of truth for "open."
   let openRequestBatchCount = 0;
   if (profile?.role === "admin") {
     const supabase = await createClient();
-    const { count } = await supabase
+    const { data: batches } = await supabase
       .from("supply_request_batches")
-      .select("id", { count: "exact", head: true })
-      .eq("status", "open");
-    openRequestBatchCount = count ?? 0;
+      .select("id, supply_requests(resolved_by_order_id)");
+    openRequestBatchCount = (batches ?? []).filter((b) =>
+      b.supply_requests.some((r) => !r.resolved_by_order_id),
+    ).length;
   }
 
   return (
