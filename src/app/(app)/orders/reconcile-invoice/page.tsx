@@ -2,6 +2,14 @@ import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ReconcileForm } from "./ReconcileForm";
 
+// A batch upload runs one real Claude API call per PDF - raised well past
+// the 10s serverless default so a real multi-file batch (extractInvoices
+// now runs those calls in parallel, but even in parallel a large batch can
+// still take longer than 10s end-to-end) doesn't get killed mid-request,
+// which is what actually caused a 28-file upload to die as a bare
+// "client-side exception" with no useful detail.
+export const maxDuration = 300;
+
 export default async function ReconcileInvoicePage() {
   await requireAdmin();
 

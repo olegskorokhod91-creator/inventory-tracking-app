@@ -225,10 +225,18 @@ export async function extractInvoices(
   }
 
   const supabase = await createClient();
-  const results: FileExtractResult[] = [];
-  for (const file of files) {
-    results.push(await processOneFile(supabase, profile.id, file));
-  }
+  // Was a sequential for-loop - one real Claude API call per file, so a
+  // large batch (28 files, once) took 28x a single call's latency and blew
+  // past the serverless function's time limit mid-request, which surfaced
+  // to the browser as a bare client-side exception. Running them
+  // concurrently instead means total time tracks the slowest single call,
+  // not the sum of all of them. Each file's Supabase reads/writes are
+  // independent rows (a per-file pdf_invoice_imports insert, duplicate
+  // checks against orders by order_number), so nothing here needs the
+  // files processed in order.
+  const results = await Promise.all(
+    files.map((file) => processOneFile(supabase, profile.id, file)),
+  );
 
   return { files: results };
 }
