@@ -4,11 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const CLEANER_LINKS = [
+const CLEANER_ONLY_LINKS = [
   { href: "/confirmations", label: "Confirmations" },
-  { href: "/properties", label: "Properties" },
-  { href: "/my-orders", label: "Orders" },
 ];
+
+const SHARED_LINKS = [{ href: "/properties", label: "Properties" }];
+
+// Read-only cleaner order view - admins already have full /orders, so this
+// is deliberately excluded from what admins see (was previously bundled
+// into a shared CLEANER_LINKS array, giving admins two "Orders" entries).
+const CLEANER_ORDERS_LINK = { href: "/my-orders", label: "Orders" };
 
 const ADMIN_ONLY_LINKS = [
   { href: "/orders", label: "Orders" },
@@ -62,7 +67,9 @@ export function NavMenu({
     };
   }, [open]);
 
-  const links = isAdmin ? [...CLEANER_LINKS, ...ADMIN_ONLY_LINKS] : CLEANER_LINKS;
+  const links = isAdmin
+    ? [...SHARED_LINKS, ...ADMIN_ONLY_LINKS]
+    : [...CLEANER_ONLY_LINKS, ...SHARED_LINKS, CLEANER_ORDERS_LINK];
 
   return (
     <div ref={containerRef} className="relative">
