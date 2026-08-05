@@ -227,16 +227,39 @@ export async function extractInvoices(
   const supabase = await createClient();
   // Was a sequential for-loop - one real Claude API call per file, so a
   // large batch (28 files, once) took 28x a single call's latency and blew
-  // past the serverless function's time limit mid-request, which surfaced
-  // to the browser as a bare client-side exception. Running them
-  // concurrently instead means total time tracks the slowest single call,
-  // not the sum of all of them. Each file's Supabase reads/writes are
-  // independent rows (a per-file pdf_invoice_imports insert, duplicate
-  // checks against orders by order_number), so nothing here needs the
-  // files processed in order.
-  const results = await Promise.all(
-    files.map((file) => processOneFile(supabase, profile.id, file)),
-  );
+  // past the serverless function's time limit mid-request. Full concurrency
+  // (Promise.all over every file at once) fixed that but traded it for a
+  // worse failure: 28 simultaneous Claude calls can trip Anthropic's own
+  // rate limits, and processOneFile had no error handling at all - one
+  // rejected call (e.g. a 429) threw, Promise.all rejected the whole batch,
+  // and the request died the same way, just from a different cause.
+  //
+  // Fixed two ways: capped concurrency (a handful of files in flight at
+  // once, not all of them) to avoid tripping rate limits in the first
+  // place, and every file's processing is now caught individually so one
+  // bad file (rate limited, malformed PDF, whatever) degrades to that
+  // file's own "error" card instead of taking down the other 27.
+  const CONCURRENCY = 4;
+  const results: FileExtractResult[] = new Array(files.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < files.length) {
+      const i = nextIndex;
+      nextIndex += 1;
+      const file = files[i];
+      try {
+        results[i] = await processOneFile(supabase, profile.id, file);
+      } catch (err) {
+        console.error("processOneFile failed:", file.name, err);
+        results[i] = {
+          status: "error",
+          filename: file.name,
+          error: err instanceof Error ? err.message : "Failed to process this file.",
+        };
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, worker));
 
   return { files: results };
 }
