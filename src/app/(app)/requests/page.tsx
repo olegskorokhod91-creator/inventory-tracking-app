@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { markRequestsOrdered, markRequestResolved } from "./actions";
+import { markRequestsOrdered, markRequestResolved, markBatchResolved } from "./actions";
 import { SubmitButton } from "@/components/SubmitButton";
 
 type RequestItem = {
@@ -93,6 +93,11 @@ export default async function RequestsPage() {
             const ordersForBatch = (linkedOrders ?? []).filter(
               (o) => o.request_batch_id === batch.id,
             );
+            const resolvableCount = batch.supply_requests.filter((item) => {
+              if (itemStatus(item) !== "Ordered") return false;
+              const order = ordersForBatch.find((o) => o.id === item.ordered_order_id);
+              return Boolean(order?.order_number);
+            }).length;
 
             return (
               <li
@@ -117,6 +122,18 @@ export default async function RequestsPage() {
                     {new Date(batch.created_at).toLocaleDateString()}
                   </span>
                 </div>
+
+                {resolvableCount > 0 && (
+                  <form action={markBatchResolved.bind(null, batch.id)}>
+                    <SubmitButton
+                      pendingText="Marking…"
+                      className="h-9 rounded-md border border-black/15 px-3 text-sm font-medium dark:border-white/20"
+                    >
+                      Mark {resolvableCount} ordered item
+                      {resolvableCount === 1 ? "" : "s"} resolved
+                    </SubmitButton>
+                  </form>
+                )}
 
                 <ul className="flex flex-col gap-2">
                   {batch.supply_requests.map((item) => {

@@ -72,3 +72,48 @@ export async function markRequestResolved(requestId: string) {
   revalidatePath("/requests");
   revalidatePath("/requests", "layout");
 }
+
+// One-click version of the same stopgap, scoped to a whole batch - clicking
+// "Mark resolved" on every stuck item individually doesn't actually solve
+// the tedium the checklist bug caused in the first place. Only resolves
+// items whose ordered_order_id points to a *real, fully-reconciled* order
+// (order_number is not null) - a request-fulfillment placeholder order
+// ("Ordered — Awaiting Confirmation", order_number still null) hasn't
+// actually gone through invoice reconciliation yet, so marking those
+// resolved would hide requests that genuinely aren't done.
+export async function markBatchResolved(batchId: string) {
+  await requireAdmin();
+
+  const supabase = await createClient();
+  const { data: requests } = await supabase
+    .from("supply_requests")
+    .select("id, ordered_order_id, orders:ordered_order_id(order_number)")
+    .eq("batch_id", batchId)
+    .is("resolved_by_order_id", null)
+    .not("ordered_order_id", "is", null)
+    .returns<{ id: string; ordered_order_id: string; orders: { order_number: string | null } | null }[]>();
+
+  const resolvable = (requests ?? []).filter((r) => r.orders?.order_number);
+  if (resolvable.length === 0) return;
+
+  const resolvedAt = new Date().toISOString();
+  // resolved_by_order_id varies per row (an item's own ordered_order_id),
+  // so this can't be one shared-value bulk update - one update per row,
+  // run concurrently since they're independent rows.
+  const results = await Promise.all(
+    resolvable.map((r) =>
+      supabase
+        .from("supply_requests")
+        .update({ resolved_by_order_id: r.ordered_order_id, resolved_at: resolvedAt })
+        .eq("id", r.id),
+    ),
+  );
+  const firstError = results.find((r) => r.error)?.error;
+  if (firstError) {
+    console.error("markBatchResolved failed:", firstError);
+    return;
+  }
+
+  revalidatePath("/requests");
+  revalidatePath("/requests", "layout");
+}
