@@ -125,7 +125,15 @@ export async function fetchBillingLines(
        order_items (id, name, expected_quantity, unit_price, is_refunded)`,
     )
     .not("property_id", "is", null)
-    .not("retailer_order_status", "ilike", "cancelled")
+    // retailer_order_status is only ever populated by the CSV pipeline -
+    // every manual/email/PDF-reconciled order has it as null. A plain
+    // .not(..., "ilike", "cancelled") translates to `NOT (col ILIKE ...)`,
+    // which SQL evaluates to NULL (not true) when col is null, and a WHERE
+    // clause drops any row that isn't true - so that silently excluded
+    // every non-CSV order from the whole report, not just cancelled ones.
+    // .or() here explicitly keeps null-status rows alongside genuinely
+    // non-cancelled ones.
+    .or("retailer_order_status.is.null,retailer_order_status.not.ilike.cancelled")
     .order("order_date", { ascending: false });
 
   if (effectivePropertyIds) {
