@@ -28,6 +28,7 @@ export type PropertyGroup = {
   propertyId: string;
   propertyName: string;
   subtotal: number;
+  itemCount: number;
   lines: BillingLine[];
 };
 
@@ -191,6 +192,7 @@ export function buildBillingReport(lines: BillingLine[]): BillingReport {
         propertyId: line.propertyId,
         propertyName: line.propertyName,
         subtotal: 0,
+        itemCount: 0,
         lines: [],
       };
       byProperty.set(line.propertyId, group);
@@ -198,6 +200,7 @@ export function buildBillingReport(lines: BillingLine[]): BillingReport {
     }
     group.lines.push(line);
     group.subtotal += line.lineCost;
+    group.itemCount += line.quantity;
   }
   const propertyGroups = propertyOrder.map((id) => byProperty.get(id)!);
 

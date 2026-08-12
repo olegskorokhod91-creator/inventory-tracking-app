@@ -65,6 +65,19 @@ function PropertyTable({
               <LineRow key={`${line.orderId}-${i}`} line={line} />
             ))}
           </tbody>
+          <tfoot>
+            <tr className="border-t border-black/10 dark:border-white/10">
+              <td colSpan={3} className="py-2 pr-3 text-right text-sm font-medium">
+                Total
+              </td>
+              <td className="py-2 pr-3 text-right text-sm font-medium">
+                {group.itemCount}
+              </td>
+              <td className="py-2 text-right text-sm font-medium">
+                {money(group.subtotal)}
+              </td>
+            </tr>
+          </tfoot>
         </table>
       </div>
     </div>
