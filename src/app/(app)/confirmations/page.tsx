@@ -2,6 +2,8 @@ import Link from "next/link";
 import { getCurrentProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { isOverdue, formatElapsed } from "@/lib/confirmation-reminders";
+import { confirmAllCorrectFromList } from "./actions";
+import { SubmitButton } from "@/components/SubmitButton";
 
 type PackageRow = {
   id: string;
@@ -57,39 +59,54 @@ export default async function ConfirmationsPage() {
             <h2 className="text-lg font-medium">{propertyName}</h2>
             <ul className="flex flex-col gap-3">
               {packages.map((pkg) => (
-                <li key={pkg.id}>
-                  <Link
-                    href={`/confirmations/${pkg.id}`}
-                    className="flex items-center justify-between rounded-lg border border-black/10 p-4 dark:border-white/10"
-                  >
-                    <div>
-                      <p className="font-medium">
-                        {pkg.orders?.retailers?.name}
-                        {pkg.orders?.order_number ? ` · #${pkg.orders.order_number}` : ""}
-                      </p>
-                      <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                        {pkg.orders?.order_date}
-                        {pkg.tracking_number
-                          ? ` · Tracking: ${pkg.tracking_number}${pkg.carrier ? ` (${pkg.carrier})` : ""}`
-                          : ""}
-                      </p>
-                      {pkg.delivered_at && (
-                        <span
-                          className={
-                            isOverdue(pkg.delivered_at)
-                              ? "mt-1 inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-950 dark:text-red-400"
-                              : "mt-1 inline-block text-xs text-zinc-500 dark:text-zinc-500"
-                          }
-                        >
-                          {isOverdue(pkg.delivered_at) ? "Overdue — " : ""}
-                          Delivered {formatElapsed(pkg.delivered_at)}
-                        </span>
-                      )}
-                    </div>
-                    <span className="h-11 shrink-0 rounded-md bg-black px-4 text-base font-medium leading-[44px] text-white dark:bg-white dark:text-black">
-                      Confirm
-                    </span>
-                  </Link>
+                <li
+                  key={pkg.id}
+                  className="flex flex-col gap-3 rounded-lg border border-black/10 p-4 dark:border-white/10"
+                >
+                  <div>
+                    <p className="font-medium">
+                      {pkg.orders?.retailers?.name}
+                      {pkg.orders?.order_number ? ` · #${pkg.orders.order_number}` : ""}
+                    </p>
+                    <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                      {pkg.orders?.order_date}
+                      {pkg.tracking_number
+                        ? ` · Tracking: ${pkg.tracking_number}${pkg.carrier ? ` (${pkg.carrier})` : ""}`
+                        : ""}
+                    </p>
+                    {pkg.delivered_at && (
+                      <span
+                        className={
+                          isOverdue(pkg.delivered_at)
+                            ? "mt-1 inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-950 dark:text-red-400"
+                            : "mt-1 inline-block text-xs text-zinc-500 dark:text-zinc-500"
+                        }
+                      >
+                        {isOverdue(pkg.delivered_at) ? "Overdue — " : ""}
+                        Delivered {formatElapsed(pkg.delivered_at)}
+                      </span>
+                    )}
+                  </div>
+                  {/* One-tap path for the common case, right from the list -
+                      no need to open the detail screen just to confirm
+                      nothing's wrong. "Report an issue" still goes to the
+                      full item-by-item screen for anything that isn't. */}
+                  <div className="flex flex-wrap gap-2">
+                    <form action={confirmAllCorrectFromList.bind(null, pkg.id)} className="flex-1">
+                      <SubmitButton
+                        pendingText="Confirming…"
+                        className="h-11 w-full rounded-md bg-green-600 text-base font-semibold text-white disabled:opacity-50"
+                      >
+                        ✓ All correct
+                      </SubmitButton>
+                    </form>
+                    <Link
+                      href={`/confirmations/${pkg.id}`}
+                      className="flex h-11 shrink-0 items-center rounded-md border border-black/15 px-4 text-sm font-medium dark:border-white/20"
+                    >
+                      Report an issue
+                    </Link>
+                  </div>
                 </li>
               ))}
             </ul>
