@@ -184,6 +184,95 @@ test("admin manually edits a package, and a second tracking number creates a new
   expect(packageAAfterConfirm?.confirmed_at).not.toBeNull();
 });
 
+test("a no-tracking status update only auto-applies when exactly one package is genuinely untouched", async () => {
+  // Reproduces a real production bug: an order reconciled from a PDF
+  // invoice with two shipment groups gets two packages up front, both
+  // 'expected' with no tracking (PDF invoices never carry tracking - only
+  // email updates do). Two separate real "Delivered" emails, neither with
+  // a tracking number, both landed on the *same* package - the old
+  // fallback picked "the oldest package with tracking_number is null",
+  // and applying a no-tracking update never fills in a tracking number,
+  // so that same package kept satisfying "untracked" forever even after
+  // being marked delivered. The second package was never touched by
+  // anything and stayed stuck at 'expected'.
+  const stamp = `${Date.now()}-${test.info().project.name}`;
+  const orderNumber = `ORD-UNTRACKED-${stamp}`;
+  const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const { data: retailer } = await serviceClient
+    .from("retailers")
+    .select("id")
+    .eq("name", "Amazon")
+    .single();
+
+  const { data: orderId } = await serviceClient.rpc("upsert_order_from_pipeline", {
+    p_source: "csv",
+    p_retailer_id: retailer!.id,
+    p_order_number: orderNumber,
+    p_order_date: "2026-07-20",
+    p_total_amount: 20,
+    p_po_number: null,
+    p_items: [{ name: "Widget", expected_quantity: 1, unit_price: "20.00" }],
+  });
+
+  // Simulates the second package a multi-shipment PDF reconciliation would
+  // create - 'expected', no tracking, same as the order's default package.
+  const { data: secondPackage } = await serviceClient
+    .from("packages")
+    .insert({ order_id: orderId, status: "expected" })
+    .select("id")
+    .single();
+
+  // Two fully virgin packages, neither ever touched - a no-tracking update
+  // genuinely can't tell which box this is about. Must not guess.
+  const { data: ambiguousResult, error: ambiguousError } = await serviceClient.rpc(
+    "apply_shipping_update",
+    {
+      p_order_number: orderNumber,
+      p_tracking_number: null,
+      p_carrier: null,
+      p_status: "delivered",
+      p_expected_delivery_date: null,
+    },
+  );
+  expect(ambiguousError).toBeNull();
+  expect(ambiguousResult).toBeNull();
+
+  // Some other event resolves the first package without touching the
+  // second (e.g. an admin manual override) - now only one package is
+  // still genuinely untouched, so this is no longer ambiguous.
+  const { data: packages } = await serviceClient
+    .from("packages")
+    .select("id")
+    .eq("order_id", orderId)
+    .order("created_at");
+  const firstPackageId = packages![0].id;
+  await serviceClient.from("packages").update({ status: "shipped" }).eq("id", firstPackageId);
+
+  const { data: firstDeliveredMatch } = await serviceClient.rpc("apply_shipping_update", {
+    p_order_number: orderNumber,
+    p_tracking_number: null,
+    p_carrier: null,
+    p_status: "delivered",
+    p_expected_delivery_date: null,
+  });
+  expect(firstDeliveredMatch).toBe(secondPackage!.id);
+
+  // The exact bug: a second no-tracking "Delivered" email arrives. Neither
+  // package is still 'expected' (first is 'shipped', second is now
+  // 'delivered') - the old code would have picked the first package again
+  // (still tracking_number is null forever), silently re-applying this
+  // update to the wrong box instead of recognizing there's no unambiguous
+  // match left.
+  const { data: secondDeliveredMatch } = await serviceClient.rpc("apply_shipping_update", {
+    p_order_number: orderNumber,
+    p_tracking_number: null,
+    p_carrier: null,
+    p_status: "delivered",
+    p_expected_delivery_date: null,
+  });
+  expect(secondDeliveredMatch).toBeNull();
+});
+
 test("Active Orders shows a sub-label derived from the least-resolved package", async ({ page }) => {
   const stamp = `${Date.now()}-${test.info().project.name}`;
   const adminName = `Admin ${stamp}`;
