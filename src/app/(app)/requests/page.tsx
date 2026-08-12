@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { markRequestsOrdered } from "./actions";
+import { markRequestsOrdered, markRequestResolved } from "./actions";
 import { SubmitButton } from "@/components/SubmitButton";
 
 type RequestItem = {
@@ -142,6 +142,16 @@ export default async function RequestsPage() {
                         >
                           {status}
                         </span>
+                        {status === "Ordered" && (
+                          <form action={markRequestResolved.bind(null, item.id)}>
+                            <SubmitButton
+                              pendingText="Marking…"
+                              className="h-8 rounded-md border border-black/15 px-3 text-xs font-medium dark:border-white/20"
+                            >
+                              Mark resolved
+                            </SubmitButton>
+                          </form>
+                        )}
                       </li>
                     );
                   })}

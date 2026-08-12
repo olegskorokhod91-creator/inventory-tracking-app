@@ -27,6 +27,20 @@ function itemLooksRequested(
   );
 }
 
+function suggestedResolvedIds(
+  candidateId: string,
+  candidates: import("./actions").CandidatePlaceholder[],
+  shipments: ShipmentDraft[],
+): Set<string> {
+  const candidate = candidates.find((c) => c.orderId === candidateId);
+  if (!candidate) return new Set();
+  return new Set(
+    candidate.batchItems
+      .filter((item) => itemLooksRequested(item.item_name, shipments))
+      .map((item) => item.id),
+  );
+}
+
 export function ReconcileForm({ properties }: { properties: Property[] }) {
   // Bumping this key forces a full remount of ReconcileFlow below, which
   // resets its useActionState back to undefined - the "start over" escape
@@ -194,12 +208,20 @@ function ReviewForm({
   const [confirmState, confirmAction] = useActionState(confirmReconciliation, undefined);
 
   const [propertyId, setPropertyId] = useState(extracted.matchedPropertyId ?? "");
-  const [selectedCandidateId, setSelectedCandidateId] = useState<string>(
-    extracted.candidates.length === 1 ? extracted.candidates[0].orderId : "",
-  );
+  const initialCandidateId =
+    extracted.candidates.length === 1 ? extracted.candidates[0].orderId : "";
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string>(initialCandidateId);
   const [shipments, setShipments] = useState<ShipmentDraft[]>(extracted.shipments);
-  const [resolvedRequestIds, setResolvedRequestIds] = useState<Set<string>>(
-    new Set(),
+  // Was always empty regardless of the "checked by default" label below -
+  // the checklist claimed a plausible match got pre-checked but nothing
+  // ever actually did that, so an admin had to manually tick every single
+  // requested item on every reconciliation or it silently stayed "Ordered"
+  // forever instead of "Resolved" (which is what makes it drop off
+  // /requests) even after the real order existed and was fully invoiced.
+  // Now actually seeds from the same itemLooksRequested match the label
+  // next to each checkbox is based on - still fully editable before saving.
+  const [resolvedRequestIds, setResolvedRequestIds] = useState<Set<string>>(() =>
+    suggestedResolvedIds(initialCandidateId, extracted.candidates, extracted.shipments),
   );
 
   // If another card in this same upload already consumed the placeholder
@@ -228,7 +250,9 @@ function ReviewForm({
 
   function selectCandidate(orderId: string) {
     setSelectedCandidateId(orderId);
-    setResolvedRequestIds(new Set());
+    setResolvedRequestIds(
+      suggestedResolvedIds(orderId, extracted.candidates, shipments),
+    );
   }
 
   function toggleResolved(id: string) {
