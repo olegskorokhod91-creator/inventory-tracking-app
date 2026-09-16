@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { markRequestsOrdered, markRequestResolved, markBatchResolved } from "./actions";
+import { markRequestsOrdered } from "./actions";
 import { SubmitButton } from "@/components/SubmitButton";
 
 type RequestItem = {
@@ -93,11 +93,6 @@ export default async function RequestsPage() {
             const ordersForBatch = (linkedOrders ?? []).filter(
               (o) => o.request_batch_id === batch.id,
             );
-            const resolvableCount = batch.supply_requests.filter((item) => {
-              if (itemStatus(item) !== "Ordered") return false;
-              const order = ordersForBatch.find((o) => o.id === item.ordered_order_id);
-              return Boolean(order?.order_number);
-            }).length;
 
             return (
               <li
@@ -123,18 +118,6 @@ export default async function RequestsPage() {
                   </span>
                 </div>
 
-                {resolvableCount > 0 && (
-                  <form action={markBatchResolved.bind(null, batch.id)}>
-                    <SubmitButton
-                      pendingText="Marking…"
-                      className="h-9 rounded-md border border-black/15 px-3 text-sm font-medium dark:border-white/20"
-                    >
-                      Mark {resolvableCount} ordered item
-                      {resolvableCount === 1 ? "" : "s"} resolved
-                    </SubmitButton>
-                  </form>
-                )}
-
                 <ul className="flex flex-col gap-2">
                   {batch.supply_requests.map((item) => {
                     const status = itemStatus(item);
@@ -159,16 +142,6 @@ export default async function RequestsPage() {
                         >
                           {status}
                         </span>
-                        {status === "Ordered" && (
-                          <form action={markRequestResolved.bind(null, item.id)}>
-                            <SubmitButton
-                              pendingText="Marking…"
-                              className="h-8 rounded-md border border-black/15 px-3 text-xs font-medium dark:border-white/20"
-                            >
-                              Mark resolved
-                            </SubmitButton>
-                          </form>
-                        )}
                       </li>
                     );
                   })}
@@ -197,23 +170,34 @@ export default async function RequestsPage() {
                     className="flex flex-col gap-2 border-t border-black/10 pt-3 dark:border-white/10"
                   >
                     <p className="text-sm font-medium">
-                      Mark items as ordered (uncheck anything not actually bought this trip)
+                      Mark items as ordered (uncheck anything not actually bought this trip) — this
+                      is final, no confirmation step follows.
                     </p>
-                    <ul className="flex flex-col gap-1">
+                    <ul className="flex flex-col gap-2">
                       {openItems.map((item) => (
-                        <li key={item.id} className="flex items-center gap-2">
+                        <li key={item.id} className="flex flex-wrap items-center gap-2">
                           <input
                             type="checkbox"
                             id={`item-${item.id}`}
                             name="request_ids"
                             value={item.id}
                             defaultChecked
-                            className="h-5 w-5"
+                            className="h-5 w-5 shrink-0"
                           />
-                          <label htmlFor={`item-${item.id}`} className="text-sm">
+                          <label htmlFor={`item-${item.id}`} className="min-w-0 flex-1 text-sm">
                             {item.item_name}
                             {item.quantity ? ` x${item.quantity}` : ""}
                           </label>
+                          <input
+                            type="number"
+                            name={`price_${item.id}`}
+                            min="0"
+                            step="0.01"
+                            inputMode="decimal"
+                            placeholder="$ (optional)"
+                            aria-label={`Price for ${item.item_name}`}
+                            className="h-9 w-28 shrink-0 rounded-md border border-black/15 px-2 text-sm dark:border-white/20"
+                          />
                         </li>
                       ))}
                     </ul>

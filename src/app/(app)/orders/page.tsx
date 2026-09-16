@@ -59,12 +59,6 @@ export default async function OrdersPage() {
             Reconcile invoice
           </Link>
           <Link
-            href="/orders/import-csv"
-            className="h-11 shrink-0 rounded-md border border-black/15 px-4 text-base font-medium leading-[44px] dark:border-white/20"
-          >
-            Import CSV
-          </Link>
-          <Link
             href="/orders/new"
             className="h-11 shrink-0 rounded-md bg-black px-4 text-base font-medium leading-[44px] text-white dark:bg-white dark:text-black"
           >

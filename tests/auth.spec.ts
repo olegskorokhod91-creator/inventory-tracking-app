@@ -29,12 +29,13 @@ test("sign up lands on the role-appropriate home page, log out", async ({
   // Generous timeout: under parallel test load against a single local
   // Supabase instance, signup (auth user + profile trigger + redirect +
   // page load) can occasionally take longer than the 5s default.
-  await expect(page).toHaveURL(/\/(properties|confirmations)/, { timeout: 15000 });
+  await expect(page).toHaveURL("/properties", { timeout: 15000 });
 
   // Which role the bootstrap trigger assigned depends on whether this
   // happened to be the very first signup across the whole parallel suite
-  // run (admin) or not (cleaner) - read it back rather than assume, then
-  // assert the landing page that role actually implies (M5).
+  // run (admin) or not (cleaner) - read it back rather than assume. Both
+  // roles land on the same /properties page now (M5's role-based landing
+  // page split was removed along with /confirmations).
   const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
   const { data: profile } = await serviceClient
     .from("profiles")
@@ -42,13 +43,7 @@ test("sign up lands on the role-appropriate home page, log out", async ({
     .eq("name", name)
     .single();
 
-  if (profile!.role === "admin") {
-    await expect(page).toHaveURL("/properties");
-    await expect(page.getByRole("heading", { name: "Properties" })).toBeVisible();
-  } else {
-    await expect(page).toHaveURL("/confirmations");
-    await expect(page.getByRole("heading", { name: "Needs confirmation" })).toBeVisible();
-  }
+  await expect(page.getByRole("heading", { name: "Properties" })).toBeVisible();
   await expect(page.getByText(new RegExp(`\\(${profile!.role}\\)`))).toBeVisible();
 
   await page.getByRole("button", { name: "Log out" }).click();

@@ -13,7 +13,7 @@ async function signUp(page: Page, name: string, email: string) {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill("password123");
   await page.getByRole("button", { name: "Sign up" }).click();
-  await expect(page).toHaveURL(/\/(properties|confirmations)/, { timeout: 15000 });
+  await expect(page).toHaveURL("/properties", { timeout: 15000 });
 }
 
 async function promoteToAdmin(name: string) {
@@ -22,7 +22,7 @@ async function promoteToAdmin(name: string) {
   if (error) throw error;
 }
 
-test("requests from separate visits append to one open batch, mark-ordered creates a tracked placeholder, and a new visit after the batch closes starts a fresh batch", async ({
+test("requests from separate visits append to one open batch, mark-ordered resolves immediately, and a new visit after the batch closes starts a fresh batch", async ({
   browser,
 }) => {
   const stamp = `${Date.now()}-${test.info().project.name}`;
@@ -86,8 +86,11 @@ test("requests from separate visits append to one open batch, mark-ordered creat
   await expect(batchCard.locator("span", { hasText: itemA })).toBeVisible();
   await expect(batchCard.locator("span", { hasText: itemB })).toBeVisible();
 
-  // Mark only item A ordered (uncheck item B) - partial fulfillment.
-  await batchCard.getByLabel(new RegExp(itemB)).uncheck();
+  // Mark only item A ordered (uncheck item B) - partial fulfillment. Scoped
+  // to the checkbox role specifically - the per-item price input's
+  // aria-label ("Price for <item>") also substring-matches a plain
+  // getByLabel(itemName) lookup.
+  await batchCard.getByRole("checkbox", { name: new RegExp(itemB) }).uncheck();
   await batchCard.locator('select[name="retailer_id"]').selectOption({ label: "Amazon" });
   await batchCard.getByRole("button", { name: "Mark as ordered" }).click();
 
@@ -96,22 +99,29 @@ test("requests from separate visits append to one open batch, mark-ordered creat
       const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
       const { data } = await serviceClient
         .from("supply_requests")
-        .select("item_name, ordered_order_id")
+        .select("item_name, ordered_order_id, resolved_by_order_id")
         .in("item_name", [itemA, itemB]);
-      return data?.map((r) => ({ item_name: r.item_name, ordered: r.ordered_order_id !== null }));
+      return data?.map((r) => ({
+        item_name: r.item_name,
+        ordered: r.ordered_order_id !== null,
+        // Marking an item ordered now resolves it in the same step - no
+        // separate confirmation/reconciliation is required for it to count
+        // as done (product-owner-directed simplification).
+        resolved: r.resolved_by_order_id !== null,
+      }));
     })
     .toEqual(
       expect.arrayContaining([
-        { item_name: itemA, ordered: true },
-        { item_name: itemB, ordered: false },
+        { item_name: itemA, ordered: true, resolved: true },
+        { item_name: itemB, ordered: false, resolved: false },
       ]),
     );
 
-  // The placeholder order shows up in Active Orders with the pending label,
-  // not the normal package-derived one.
+  // The order is done immediately - shows up in Active Orders as completed,
+  // not sitting in an intermediate "awaiting" state.
   await adminPage.goto("/orders");
   const orderRow = adminPage.locator("li", { hasText: propertyName });
-  await expect(orderRow.getByText("Ordered — Awaiting Confirmation")).toBeVisible();
+  await expect(orderRow.getByText("completed")).toBeVisible();
 
   // Now mark item B ordered too - the batch is fully ordered, so it should
   // close (no longer accept new items).
@@ -160,7 +170,7 @@ test("requests from separate visits append to one open batch, mark-ordered creat
   expect(batchesForProperty!.filter((b) => b.status === "closed")).toHaveLength(1);
 });
 
-test("PDF reconciliation: consumes the placeholder for the first order number, creates an additional linked order for a second, and only fulfills the batch once every item is resolved", async ({
+test("mark-ordered resolves and completes an order immediately; a later optional PDF reconciliation attaches a real invoice without creating a duplicate", async ({
   page,
 }) => {
   const stamp = `${Date.now()}-${test.info().project.name}`;
@@ -210,111 +220,98 @@ test("PDF reconciliation: consumes the placeholder for the first order number, c
   const shockRequestId = requestRows!.find((r) => r.item_name === "Hot tub shock")!.id;
   const paperRequestId = requestRows!.find((r) => r.item_name === "Toilet paper")!.id;
 
-  // Admin marks both items ordered in one placeholder (real "mark ordered"
-  // action would run as the admin session; using the service client here is
-  // just the seeding shortcut this suite always uses for RPC calls).
-  const { data: placeholderOrderId } = await serviceClient.rpc("mark_supply_requests_ordered", {
+  // Admin marks both items ordered with a hand-typed price (real "mark
+  // ordered" action would run as the admin session; using the service
+  // client here is just the seeding shortcut this suite always uses for
+  // RPC calls). This is now the entire lifecycle - no tracking, no
+  // confirmation - the order is done the instant this call returns.
+  const { data: orderId } = await serviceClient.rpc("mark_supply_requests_ordered", {
     p_batch_id: batchId,
     p_request_ids: [shockRequestId, paperRequestId],
     p_retailer_id: retailer!.id,
+    p_item_prices: { [shockRequestId]: "56.99", [paperRequestId]: "22.56" },
   });
 
-  const { data: placeholderBefore } = await serviceClient
+  const { data: orderBefore } = await serviceClient
     .from("orders")
     .select("order_number, source")
-    .eq("id", placeholderOrderId)
+    .eq("id", orderId)
     .single();
-  expect(placeholderBefore?.order_number).toBeNull();
-  expect(placeholderBefore?.source).toBe("request_fulfillment");
+  // No real Amazon order number yet (never uploaded an invoice) - that's
+  // fine, it's still done.
+  expect(orderBefore?.order_number).toBeNull();
+  expect(orderBefore?.source).toBe("request_fulfillment");
 
-  // First PDF: Amazon's first split order number. Consumes the placeholder
-  // in place, only resolves the item actually found in this shipment.
-  const { data: firstOrderId, error: firstError } = await serviceClient.rpc(
+  const { data: packageBefore } = await serviceClient
+    .from("packages")
+    .select("status, confirmed_source")
+    .eq("order_id", orderId)
+    .single();
+  expect(packageBefore?.status).toBe("confirmed_received");
+  expect(packageBefore?.confirmed_source).toBe("admin_manual");
+
+  const { data: requestsBefore } = await serviceClient
+    .from("supply_requests")
+    .select("resolved_by_order_id")
+    .eq("batch_id", batchId);
+  expect(requestsBefore!.every((r) => r.resolved_by_order_id === orderId)).toBe(true);
+
+  const { data: itemsBefore } = await serviceClient
+    .from("order_items")
+    .select("name, unit_price")
+    .eq("order_id", orderId)
+    .order("name");
+  expect(itemsBefore!.find((i) => i.name === "Hot tub shock")?.unit_price).toBe(56.99);
+
+  // Fully resolved batches drop off the Requests screen's "needs attention"
+  // list entirely, immediately - no separate reconciliation step required.
+  await page.goto("/requests");
+  await expect(page.getByText(propertyName)).not.toBeVisible();
+
+  // Later, the admin optionally uploads the real Amazon PDF invoice for
+  // more accurate item names/pricing - updates the same order in place,
+  // does not create a duplicate, and the order stays done throughout.
+  const { data: reconciledOrderId, error: reconcileError } = await serviceClient.rpc(
     "reconcile_pdf_invoice_order",
     {
-      p_existing_order_id: placeholderOrderId,
+      p_existing_order_id: orderId,
       p_property_id: property!.id,
       p_retailer_id: retailer!.id,
       p_order_number: `113-AAA-${stamp}`,
       p_order_date: "2026-06-20",
-      p_total_amount: 56.99,
+      p_total_amount: 79.55,
       p_request_batch_id: batchId,
-      p_shipments: [{ items: [{ name: "Aquadoc Non-Chlorine Spa Shock", expected_quantity: 1, unit_price: 56.99 }] }],
-      p_resolved_request_ids: [shockRequestId],
+      p_shipments: [
+        {
+          items: [
+            { name: "Aquadoc Non-Chlorine Spa Shock", expected_quantity: 1, unit_price: 56.99 },
+            { name: "Amazon Basics 2-Ply Toilet Paper", expected_quantity: 1, unit_price: 22.56 },
+          ],
+        },
+      ],
+      p_resolved_request_ids: [],
       p_pdf_import_id: null,
     },
   );
-  expect(firstError).toBeNull();
-  expect(firstOrderId).toBe(placeholderOrderId);
+  expect(reconcileError).toBeNull();
+  expect(reconciledOrderId).toBe(orderId);
 
-  const { data: firstOrderAfter } = await serviceClient
-    .from("orders")
-    .select("order_number, source, request_batch_id")
-    .eq("id", firstOrderId)
-    .single();
-  expect(firstOrderAfter?.order_number).toBe(`113-AAA-${stamp}`);
-  expect(firstOrderAfter?.request_batch_id).toBe(batchId);
-
-  const { data: shockRequestAfterFirst } = await serviceClient
-    .from("supply_requests")
-    .select("resolved_by_order_id")
-    .eq("id", shockRequestId)
-    .single();
-  expect(shockRequestAfterFirst?.resolved_by_order_id).toBe(firstOrderId);
-
-  const { data: paperRequestAfterFirst } = await serviceClient
-    .from("supply_requests")
-    .select("resolved_by_order_id")
-    .eq("id", paperRequestId)
-    .single();
-  expect(paperRequestAfterFirst?.resolved_by_order_id).toBeNull();
-
-  // Second PDF: Amazon split the same purchase into a second order number.
-  // No placeholder left to consume for it - must create an ADDITIONAL
-  // order, not overwrite the first, but still link back to the same batch.
-  const { data: secondOrderId, error: secondError } = await serviceClient.rpc(
-    "reconcile_pdf_invoice_order",
-    {
-      p_existing_order_id: null,
-      p_property_id: property!.id,
-      p_retailer_id: retailer!.id,
-      p_order_number: `113-BBB-${stamp}`,
-      p_order_date: "2026-06-20",
-      p_total_amount: 22.56,
-      p_request_batch_id: batchId,
-      p_shipments: [{ items: [{ name: "Amazon Basics 2-Ply Toilet Paper", expected_quantity: 1, unit_price: 22.56 }] }],
-      p_resolved_request_ids: [paperRequestId],
-      p_pdf_import_id: null,
-    },
-  );
-  expect(secondError).toBeNull();
-  expect(secondOrderId).not.toBe(firstOrderId);
-
-  const { data: ordersForBatch } = await serviceClient
+  const { data: allOrdersForBatch } = await serviceClient
     .from("orders")
     .select("id, order_number")
-    .eq("request_batch_id", batchId)
-    .order("order_number");
-  expect(ordersForBatch).toHaveLength(2);
+    .eq("request_batch_id", batchId);
+  expect(allOrdersForBatch).toHaveLength(1);
+  expect(allOrdersForBatch![0].order_number).toBe(`113-AAA-${stamp}`);
 
-  // Batch is now fully accounted for - every item resolved by some real
-  // order. Both orders show up on the Requests screen for this batch.
-  const { data: allRequestsResolved } = await serviceClient
-    .from("supply_requests")
-    .select("resolved_by_order_id")
-    .eq("batch_id", batchId);
-  expect(allRequestsResolved!.every((r) => r.resolved_by_order_id !== null)).toBe(true);
+  const { data: packageAfter } = await serviceClient
+    .from("packages")
+    .select("status")
+    .eq("order_id", orderId)
+    .single();
+  expect(packageAfter?.status).toBe("confirmed_received");
 
-  await page.goto("/requests");
-  // Fully resolved batches drop off the Requests screen's "needs attention"
-  // list entirely.
-  await expect(page.getByText(propertyName)).not.toBeVisible();
-
-  // Both real orders are independently visible in Active Orders, each with
-  // its own order number - never merged into one order record.
   await page.goto("/orders");
   await expect(page.getByText(`#113-AAA-${stamp}`)).toBeVisible();
-  await expect(page.getByText(`#113-BBB-${stamp}`)).toBeVisible();
 });
 
 test("cleaner can remove their own still-open request, but loses that option once it's marked ordered", async ({
@@ -497,13 +494,18 @@ test("admin can remove an order item, but gets a friendly error for one already 
   expect(remainingItems).toHaveLength(1);
 });
 
-test("admin can remove an Open or Ordered request, but not a Resolved one", async ({ page }) => {
+test("admin can remove an Open request, but not one already marked ordered", async ({ page }) => {
+  // Marking a request ordered now resolves it in the same step (product-
+  // owner-directed simplification - no separate reconciliation needed for
+  // it to count as done), so the old three-way Open/Ordered/Resolved
+  // distinction collapsed to two: Open (removable) and done (not - it's
+  // the closest thing this app has to settled history, same reasoning
+  // "Admins can delete unresolved requests" RLS already documents).
   const stamp = `${Date.now()}-${test.info().project.name}`;
   const adminName = `Admin ${stamp}`;
   const propertyName = `Admin Remove Property ${stamp}`;
   const openItem = `Open Item ${stamp}`;
   const orderedItem = `Ordered Item ${stamp}`;
-  const resolvedItem = `Resolved Item ${stamp}`;
 
   await signUp(page, adminName, `admin-${stamp}@example.com`);
   await promoteToAdmin(adminName);
@@ -525,7 +527,6 @@ test("admin can remove an Open or Ordered request, but not a Resolved one", asyn
   await serviceClient.from("supply_requests").insert([
     { batch_id: batch!.id, property_id: property!.id, created_by: adminProfile!.id, item_name: openItem },
     { batch_id: batch!.id, property_id: property!.id, created_by: adminProfile!.id, item_name: orderedItem },
-    { batch_id: batch!.id, property_id: property!.id, created_by: adminProfile!.id, item_name: resolvedItem },
   ]);
 
   const { data: orderedRow } = await serviceClient
@@ -533,21 +534,12 @@ test("admin can remove an Open or Ordered request, but not a Resolved one", asyn
     .select("id")
     .eq("item_name", orderedItem)
     .single();
-  const { data: resolvedRow } = await serviceClient
-    .from("supply_requests")
-    .select("id")
-    .eq("item_name", resolvedItem)
-    .single();
 
-  const { data: placeholderOrderId } = await serviceClient.rpc("mark_supply_requests_ordered", {
+  await serviceClient.rpc("mark_supply_requests_ordered", {
     p_batch_id: batch!.id,
     p_request_ids: [orderedRow!.id],
     p_retailer_id: retailer!.id,
   });
-  await serviceClient
-    .from("supply_requests")
-    .update({ resolved_by_order_id: placeholderOrderId, resolved_at: new Date().toISOString() })
-    .eq("id", resolvedRow!.id);
 
   await page.goto(`/properties/${property!.id}`);
 
@@ -555,21 +547,17 @@ test("admin can remove an Open or Ordered request, but not a Resolved one", asyn
   await page.locator("li", { hasText: openItem }).getByRole("button", { name: "Remove" }).click();
   await expect(page.getByText(openItem, { exact: true })).not.toBeVisible();
 
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.locator("li", { hasText: orderedItem }).getByRole("button", { name: "Remove" }).click();
-  await expect(page.getByText(orderedItem, { exact: true })).not.toBeVisible();
-
-  // Resolved is tied to a real reconciled order - no Remove option at all,
-  // for admin or cleaner.
+  // Already marked ordered (and therefore already resolved) - no Remove
+  // option at all, for admin or cleaner.
   await expect(
-    page.locator("li", { hasText: resolvedItem }).getByRole("button", { name: "Remove" }),
+    page.locator("li", { hasText: orderedItem }).getByRole("button", { name: "Remove" }),
   ).not.toBeVisible();
 
   const { data: remaining } = await serviceClient
     .from("supply_requests")
     .select("item_name")
     .eq("batch_id", batch!.id);
-  expect(remaining!.map((r) => r.item_name)).toEqual([resolvedItem]);
+  expect(remaining!.map((r) => r.item_name)).toEqual([orderedItem]);
 });
 
 test("nav badge reflects request removal without a manual reload", async ({ page }) => {

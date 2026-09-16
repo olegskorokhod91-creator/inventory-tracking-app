@@ -82,9 +82,6 @@ test("data retention deletes confirmation photos older than 12 months, keeps rec
   expect(response.ok()).toBe(true);
   const summary = await response.json();
   expect(summary.photosDeleted).toBeGreaterThanOrEqual(1);
-  // Correct-but-currently-a-no-op, per M8 scope: nothing has ever populated
-  // imported_emails.raw_storage_path, so this side always finds zero rows.
-  expect(summary.rawEmailsDeleted).toBe(0);
 
   const { data: oldAfter } = await serviceClient
     .from("package_confirmations")

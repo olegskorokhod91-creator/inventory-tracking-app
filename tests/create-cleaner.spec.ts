@@ -13,7 +13,7 @@ async function signUp(page: Page, name: string, email: string) {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill("password123");
   await page.getByRole("button", { name: "Sign up" }).click();
-  await expect(page).toHaveURL(/\/(properties|confirmations)/, { timeout: 15000 });
+  await expect(page).toHaveURL("/properties", { timeout: 15000 });
 }
 
 async function promoteToAdmin(name: string) {
@@ -59,7 +59,7 @@ test("admin creates a cleaner login directly - no email sent, cleaner can log in
   await cleanerPage.getByLabel("Email").fill(cleanerEmail);
   await cleanerPage.getByLabel("Password").fill("cleanerpass123");
   await cleanerPage.getByRole("button", { name: "Log in" }).click();
-  await expect(cleanerPage).toHaveURL("/confirmations", { timeout: 15000 });
+  await expect(cleanerPage).toHaveURL("/properties", { timeout: 15000 });
 
   await adminContext.close();
   await cleanerContext.close();

@@ -2,10 +2,6 @@
   "regions": ["pdx1"],
   "crons": [
     {
-      "path": "/api/cron/poll-emails",
-      "schedule": "0 13 * * *"
-    },
-    {
       "path": "/api/cron/data-retention",
       "schedule": "0 14 * * *"
     }

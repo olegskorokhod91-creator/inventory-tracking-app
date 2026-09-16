@@ -18,9 +18,10 @@ async function signUp(page: Page, name: string, email: string) {
   await page.getByRole("button", { name: "Sign up" }).click();
   // Generous timeout: under parallel test load against a single local
   // Supabase instance, signup can occasionally take longer than the 5s default.
-  // Role-based landing (M5): admins land on /properties, cleaners on
-  // /confirmations - this helper is used for both, so accept either.
-  await expect(page).toHaveURL(/\/(properties|confirmations)/, { timeout: 15000 });
+  // Role-based landing (M5): both roles land on /properties now that
+  // /confirmations was removed (cleaner delivery confirmation removed
+  // entirely - see CLAUDE.md).
+  await expect(page).toHaveURL("/properties", { timeout: 15000 });
 }
 
 async function promoteToAdmin(name: string) {
@@ -45,10 +46,6 @@ test("cleaners only see properties they're assigned to", async ({
   const adminPage = await adminContext.newPage();
   await signUp(adminPage, adminName, `admin-${stamp}@example.com`);
   await promoteToAdmin(adminName);
-  // A plain reload() would just re-fetch whatever URL signUp() landed on -
-  // if that happened to be /confirmations (cleaner role at signup time,
-  // before this promotion), reload() never gets to /properties at all.
-  // goto() re-runs the role-based landing redirect for real.
   await adminPage.goto("/properties");
 
   for (const name of [assignedPropertyName, unassignedPropertyName]) {
@@ -62,8 +59,6 @@ test("cleaners only see properties they're assigned to", async ({
   const cleanerContext = await browser.newContext();
   const cleanerPage = await cleanerContext.newPage();
   await signUp(cleanerPage, cleanerName, `cleaner-${stamp}@example.com`);
-  // Cleaners land on /confirmations post-signup (M5), not /properties - this
-  // test is specifically about the properties list, so navigate explicitly.
   await cleanerPage.goto("/properties");
 
   // Before any assignment, the cleaner sees neither property.

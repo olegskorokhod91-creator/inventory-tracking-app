@@ -16,9 +16,10 @@ async function signUp(page: Page, name: string, email: string) {
   await page.getByRole("button", { name: "Sign up" }).click();
   // Generous timeout: under parallel test load against a single local
   // Supabase instance, signup can occasionally take longer than the 5s default.
-  // Role-based landing (M5): admins land on /properties, cleaners on
-  // /confirmations - this helper is used for both, so accept either.
-  await expect(page).toHaveURL(/\/(properties|confirmations)/, { timeout: 15000 });
+  // Role-based landing (M5): both roles land on /properties now that
+  // /confirmations was removed (cleaner delivery confirmation removed
+  // entirely - see CLAUDE.md).
+  await expect(page).toHaveURL("/properties", { timeout: 15000 });
 }
 
 async function promoteToAdmin(name: string) {
@@ -51,10 +52,6 @@ test("admin creates a manual order and it shows correct derived status", async (
 
   await signUp(page, adminName, `admin-${stamp}@example.com`);
   await promoteToAdmin(adminName);
-  // A plain reload() would just re-fetch whatever URL signUp() landed on -
-  // if that happened to be /confirmations (cleaner role at signup time,
-  // before this promotion), reload() never gets to /properties at all.
-  // goto() re-runs the role-based landing redirect for real.
   await page.goto("/properties");
 
   await page.getByPlaceholder("Name").fill(propertyName);
@@ -72,10 +69,13 @@ test("admin creates a manual order and it shows correct derived status", async (
   await page.getByRole("button", { name: "Create order" }).click();
 
   await expect(page).toHaveURL(/\/orders\/[0-9a-f-]+$/);
-  await expect(page.getByText("active")).toBeVisible();
+  // Manual order creation is done immediately now (product-owner-directed
+  // simplification: no tracking, no confirmation step) - the order is born
+  // 'completed'/confirmed_received, not sitting active awaiting shipment.
+  await expect(page.getByText("completed")).toBeVisible();
   await expect(page.getByText("Paper towels")).toBeVisible();
   await expect(page.getByText("x2")).toBeVisible();
-  await expect(page.locator('select[name="status"]')).toHaveValue("expected");
+  await expect(page.locator('select[name="status"]')).toHaveValue("confirmed_received");
   await expect(page.locator('input[name="tracking_number"]')).toHaveValue("");
 
   await page.goto("/orders");
