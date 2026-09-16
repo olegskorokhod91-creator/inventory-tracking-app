@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { suggestPropertyMatch } from "@/lib/property-suggestion";
 import { updateOrder, updatePackage } from "../actions";
 import { RefundToggle } from "./RefundToggle";
+import { PriceEditor } from "./PriceEditor";
 import { RemoveItemButton } from "./RemoveItemButton";
 import { DeleteOrderButton } from "./DeleteOrderButton";
 import { SubmitButton } from "@/components/SubmitButton";
@@ -244,11 +245,11 @@ export default async function OrderDetailPage({
                 <span className={item.is_refunded ? "line-through opacity-60" : ""}>
                   {item.name}
                 </span>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <span className="text-sm text-zinc-600 dark:text-zinc-400">
                     x{item.expected_quantity}
-                    {item.unit_price != null ? ` · $${item.unit_price}` : ""}
                   </span>
+                  <PriceEditor itemId={item.id} unitPrice={item.unit_price} />
                   <RefundToggle itemId={item.id} refunded={item.is_refunded} />
                   <RemoveItemButton itemId={item.id} itemName={item.name} />
                 </div>

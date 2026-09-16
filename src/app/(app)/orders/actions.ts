@@ -117,6 +117,40 @@ export async function setItemRefunded(itemId: string, refunded: boolean) {
   }
 }
 
+// Fills in a price the admin skipped when marking a request-fulfillment
+// order done (no PDF invoice, "Mark as ordered" with the price field left
+// blank) - previously the only way to add a price after the fact was a
+// full PDF reconciliation, which needs a real invoice to exist at all.
+// Blank input clears the price back to null rather than erroring.
+export async function setItemPrice(itemId: string, priceInput: string) {
+  const profile = await requireAdmin();
+
+  const trimmed = priceInput.trim();
+  const newPrice = trimmed ? Number(trimmed) : null;
+  if (trimmed && (Number.isNaN(newPrice) || newPrice! < 0)) return;
+
+  const supabase = await createClient();
+  const { data: item } = await supabase
+    .from("order_items")
+    .select("order_id, unit_price")
+    .eq("id", itemId)
+    .single();
+
+  const { error } = await supabase
+    .from("order_items")
+    .update({ unit_price: newPrice })
+    .eq("id", itemId);
+
+  if (item && !error) {
+    await logAuditChanges(supabase, profile.id, "order_items", itemId, [
+      { field: "unit_price", oldValue: item.unit_price, newValue: newPrice },
+    ]);
+    revalidatePath(`/orders/${item.order_id}`);
+    revalidatePath("/orders/past");
+    revalidatePath("/reports/owner-billing");
+  }
+}
+
 // True only if a real cleaner (or admin-manual) confirmation exists on any
 // of the order's packages - the one thing that must never be silently lost
 // by deleting the order. Checked before every order deletion below.
